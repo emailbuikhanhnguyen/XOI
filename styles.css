@@ -29,6 +29,12 @@
 
 * { box-sizing: border-box; }
 
+/* Luôn ưu tiên thuộc tính [hidden] — tránh bị các class có display:flex/grid
+   (như .login-screen, .app) ghi đè khiến 2 màn hình hiển thị chồng lên nhau
+   (đây là nguyên nhân gây ra lỗi "đăng nhập xong bị kéo xuống thay vì
+   chuyển trang"). */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;

@@ -114,11 +114,13 @@ function showLogin() {
   $("#screen-login").hidden = false;
   $("#app").hidden = true;
   $("#form-login").reset();
+  window.scrollTo(0, 0);
 }
 
 function showApp() {
   $("#screen-login").hidden = true;
   $("#app").hidden = false;
+  window.scrollTo(0, 0);
   $("#user-chip").textContent = `${profile.name} · ${profile.role === "admin" ? "Chủ quán" : "Nhân viên"}`;
   $$(".nav-item[data-admin-only]").forEach((btn) => { btn.hidden = profile.role !== "admin"; });
   if (!location.hash || (profile.role !== "admin" && ["#/bao-cao", "#/nhan-vien"].includes(location.hash))) {
@@ -198,6 +200,7 @@ function router() {
   }
   $("#view-title").textContent = TITLES[view];
   $$(".nav-item").forEach((btn) => btn.classList.toggle("active", btn.dataset.view === view));
+  window.scrollTo(0, 0);
 
   if (view === "trang-chu") renderTrangChu();
   else if (view === "cham-cong") renderChamCong();
@@ -383,7 +386,7 @@ function renderEntryCards(rows, showName, showActions = false) {
         <span>Số lượng: <b>${fmtNum(r.soLuong)}</b></span>
         <span>Thưởng: <b>${fmt(r.thuong)}</b></span>
         ${r.ship ? `<span>Ship: <b>${fmtNum(r.ship)}</b></span>` : ""}
-        ${r.dep ? `<span>Dẹp/ế: <b>${fmtNum(r.dep)}</b></span>` : ""}
+        ${r.dep ? `<span>Xôi ế/dẹp: <b>${fmtNum(r.dep)}</b></span>` : ""}
       </div>`}
       ${r.ghiChu ? `<div class="entry-note">${escapeHtml(r.ghiChu)}</div>` : ""}
       ${showActions ? `
@@ -716,7 +719,7 @@ async function renderSettlements(entries) {
 
 function exportCsv() {
   const from = $("#report-from").value, to = $("#report-to").value;
-  const rows = [["Ngày", "Nhân viên", "Lương", "Số lượng", "Thưởng", "Tổng", "Ship", "Dẹp/ế", "Ghi chú"]];
+  const rows = [["Ngày", "Nhân viên", "Lương", "Số lượng", "Thưởng", "Tổng", "Ship", "Xôi ế/dẹp", "Ghi chú"]];
   reportEntriesCache.forEach((r) => {
     rows.push([r.date, r.name || staffName(r.uid), r.offDay ? "Nghỉ" : r.luong, r.offDay ? "" : r.soLuong,
       r.offDay ? "" : r.thuong, r.offDay ? 0 : r.tong, r.ship || "", r.dep || "", (r.ghiChu || "").replace(/\n/g, " ")]);
