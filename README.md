@@ -17,15 +17,22 @@ bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ
   điểm bán theo ngày. Điểm bán chỉ xem được (không sửa) danh sách đã nhận.
 - **Tồn kho bếp** = tổng đã nhập − tổng đã chuyển đi (tính trong 365 ngày gần
   nhất), tính theo từng loại nguyên liệu.
+- **Thu & chi** (`thuchi`): sổ ghi các khoản thu/chi ngoài lương và nguyên
+  liệu (tiền mặt bằng, điện nước, sửa chữa, thu khác...), mỗi khoản có loại
+  (thu/chi), danh mục, số tiền, ngày, và có thể gắn với 1 điểm bán/bếp cụ thể
+  hoặc để "Chung (toàn quán)". Chỉ chủ quán mới thêm/sửa/xoá được.
 - **Báo cáo**: lọc theo khoảng ngày + theo điểm bán (hoặc "Tất cả điểm"), có
   bảng so sánh từng điểm, bảng theo nhân viên, biểu đồ theo ngày, quyết toán
-  lương theo tuần, xuất CSV.
+  lương theo tuần, xuất CSV. Lợi nhuận ước tính đã cộng/trừ thêm **Thu khác /
+  Chi khác** lấy từ sổ Thu & chi trong cùng khoảng ngày (và cùng điểm bán nếu
+  có lọc).
 
 ## Tính năng theo vai trò
 
 - **Chủ quán (admin)**: thấy toàn bộ hệ thống — quản lý điểm bán/bếp, tạo tài
-  khoản nhân viên và gán điểm, xem kho + chuyển hàng ở mọi bếp, xem báo cáo
-  toàn hệ thống hoặc từng điểm.
+  khoản nhân viên và gán điểm, xem kho + chuyển hàng ở mọi bếp, ghi sổ Thu &
+  chi (mục "Thu chi" trên thanh điều hướng), xem báo cáo toàn hệ thống hoặc
+  từng điểm.
 - **Nhân viên tại bếp trung tâm**: chấm công như bình thường, cộng thêm quyền
   nhập nguyên liệu, ghi nhận chuyển hàng cho các điểm bán, xem tồn kho.
 - **Nhân viên tại điểm bán**: chấm công (lương, số lượng bán, thưởng, ship,

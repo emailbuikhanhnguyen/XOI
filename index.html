@@ -79,6 +79,10 @@
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3h14l-1 6a6 6 0 0 1-12 0L5 3Z"/><path d="M9 21h6M12 15v6"/></svg>
       <span>Kho</span>
     </button>
+    <button class="nav-item" data-view="thu-chi" data-admin-only="1">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      <span>Thu chi</span>
+    </button>
     <button class="nav-item" data-view="bao-cao" data-admin-only="1">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
       <span>Báo cáo</span>
@@ -266,6 +270,81 @@
       <h3 class="section-heading">Tồn kho hiện tại</h3>
       <div class="table-wrap" data-bind="stock-table"></div>
     </div>
+  </section>
+</template>
+
+<template id="tpl-thu-chi">
+  <section class="view">
+    <form id="form-thuchi" class="ticket ticket-form">
+      <p class="eyebrow">Ghi nhận khoản thu / chi</p>
+      <div class="grid-2">
+        <label class="field">
+          <span>Loại</span>
+          <select id="tc-loai">
+            <option value="thu">Khoản thu</option>
+            <option value="chi" selected>Khoản chi</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Ngày</span>
+          <input type="date" id="tc-date" required />
+        </label>
+      </div>
+      <label class="field">
+        <span>Danh mục</span>
+        <input type="text" id="tc-danhmuc" list="thuchi-suggestions" placeholder="VD: Tiền mặt bằng" required />
+      </label>
+      <div class="grid-2">
+        <label class="field">
+          <span>Số tiền (đ)</span>
+          <input type="number" inputmode="numeric" id="tc-sotien" min="0" step="1000" required />
+        </label>
+        <label class="field">
+          <span>Điểm liên quan</span>
+          <select id="tc-location"></select>
+        </label>
+      </div>
+      <label class="field">
+        <span>Ghi chú</span>
+        <input type="text" id="tc-ghichu" placeholder="VD: Thanh toán tiền điện tháng 8" />
+      </label>
+      <div class="ticket-actions">
+        <button type="button" id="btn-tc-cancel" class="btn btn-ghost" hidden>Huỷ sửa</button>
+        <button type="submit" class="btn btn-primary">Lưu giao dịch</button>
+      </div>
+    </form>
+
+    <div class="ticket">
+      <p class="eyebrow">Khoảng thời gian &amp; bộ lọc</p>
+      <div class="grid-2">
+        <label class="field"><span>Từ ngày</span><input type="date" id="tc-from" /></label>
+        <label class="field"><span>Đến ngày</span><input type="date" id="tc-to" /></label>
+      </div>
+      <div class="grid-2">
+        <label class="field">
+          <span>Loại</span>
+          <select id="tc-filter-loai">
+            <option value="">Tất cả</option>
+            <option value="thu">Chỉ khoản thu</option>
+            <option value="chi">Chỉ khoản chi</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Điểm</span>
+          <select id="tc-filter-location"></select>
+        </label>
+      </div>
+      <div class="chip-row" id="tc-presets">
+        <button type="button" class="chip" data-preset="week">Tuần này</button>
+        <button type="button" class="chip" data-preset="month">Tháng này</button>
+        <button type="button" class="chip" data-preset="7">7 ngày</button>
+      </div>
+    </div>
+
+    <div class="stat-grid" data-bind="tc-summary"></div>
+
+    <h3 class="section-heading">Danh sách giao dịch</h3>
+    <div class="stack" data-bind="tc-list"></div>
   </section>
 </template>
 

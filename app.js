@@ -31,9 +31,14 @@ let editingEntryId = null;
 let editingIngId = null;
 let editingTransferId = null;
 let editingLocationId = null;
+let editingThuChiId = null;
 
 const STOCK_WINDOW_DAYS = 365; // khoảng thời gian dùng để tính tồn kho / lịch sử gần đây
 const ITEM_SUGGESTIONS = ["Gà", "Nấm", "Gạo nếp", "Đậu xanh", "Dầu ăn", "Hành phi", "Gia vị", "Nước tương", "Túi/hộp gói"];
+const THU_CHI_CATEGORIES = [
+  "Doanh thu khác", "Tiền mặt bằng", "Điện nước", "Sửa chữa/bảo trì",
+  "Marketing/quảng cáo", "Vận chuyển", "Dụng cụ/vật tư", "Thuế/phí", "Chi phí khác",
+];
 
 /* ===================== HELPERS ===================== */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -219,11 +224,19 @@ async function fetchTransfersByRange(from, to) {
   return rows;
 }
 
+async function fetchThuChiByRange(from, to) {
+  const q = query(collection(db, "thuchi"), where("date", ">=", from), where("date", "<=", to), orderBy("date", "asc"));
+  const snap = await getDocs(q);
+  const rows = [];
+  snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
+  return rows;
+}
+
 /* ===================== ROUTER ===================== */
-const ADMIN_ONLY = ["bao-cao", "quan-ly"];
+const ADMIN_ONLY = ["bao-cao", "quan-ly", "thu-chi"];
 const TITLES = {
   "trang-chu": "Trang chủ", "cham-cong": "Chấm công", "kho": "Kho & Chuyển hàng",
-  "bao-cao": "Báo cáo", "quan-ly": "Quản lý",
+  "thu-chi": "Thu & chi", "bao-cao": "Báo cáo", "quan-ly": "Quản lý",
 };
 
 window.addEventListener("hashchange", router);
@@ -247,6 +260,7 @@ function router() {
   if (view === "trang-chu") renderTrangChu();
   else if (view === "cham-cong") renderChamCong();
   else if (view === "kho") renderKho();
+  else if (view === "thu-chi") renderThuChi();
   else if (view === "bao-cao") renderBaoCao();
   else if (view === "quan-ly") renderQuanLy();
 }
@@ -539,6 +553,32 @@ viewRoot.addEventListener("click", async (e) => {
     } catch (err) { console.error(err); toast("Không xoá được"); }
   }
 
+  const tcEditBtn = e.target.closest("[data-tc-edit]");
+  const tcDelBtn = e.target.closest("[data-tc-del]");
+  if (tcEditBtn) {
+    const id = tcEditBtn.dataset.tcEdit;
+    const row = thuChiCacheGlobal.find((r) => r.id === id);
+    if (!row) return;
+    editingThuChiId = id;
+    $("#tc-loai").value = row.loai === "thu" ? "thu" : "chi";
+    $("#tc-date").value = row.date;
+    $("#tc-danhmuc").value = row.danhMuc || "";
+    $("#tc-sotien").value = row.soTien || 0;
+    $("#tc-location").value = row.locationId || "";
+    $("#tc-ghichu").value = row.ghiChu || "";
+    $("#btn-tc-cancel").hidden = false;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  if (tcDelBtn) {
+    const id = tcDelBtn.dataset.tcDel;
+    if (!confirm("Xoá giao dịch thu/chi này?")) return;
+    try {
+      await deleteDoc(doc(db, "thuchi", id));
+      toast("Đã xoá giao dịch");
+      await loadAndRenderThuChi();
+    } catch (err) { console.error(err); toast("Không xoá được"); }
+  }
+
   const locEditBtn = e.target.closest("[data-loc-edit]");
   const locToggleBtn = e.target.closest("[data-loc-toggle]");
   if (locEditBtn) {
@@ -802,6 +842,156 @@ function renderTransferCards(rows, showActions) {
   `).join("");
 }
 
+/* ===================== THU & CHI ===================== */
+let thuChiCacheGlobal = [];
+
+function thuChiDatalistHtml() {
+  return `<datalist id="thuchi-suggestions">${THU_CHI_CATEGORIES.map((s) => `<option value="${escapeHtml(s)}"></option>`).join("")}</datalist>`;
+}
+
+function tcLocationLabel(id) { return id ? locationName(id) : "Chung (toàn quán)"; }
+
+async function renderThuChi() {
+  mount("thu-chi");
+  editingThuChiId = null;
+  viewRoot.insertAdjacentHTML("beforeend", thuChiDatalistHtml());
+
+  $("#tc-date").value = todayISO();
+  $("#tc-loai").value = "chi";
+
+  const locOptionsHtml = `<option value="">Chung (toàn quán)</option>` + activeLocations()
+    .map(([id, l]) => `<option value="${id}">${escapeHtml(l.name)}${l.type === "kitchen" ? " (bếp)" : ""}</option>`).join("");
+  $("#tc-location").innerHTML = locOptionsHtml;
+  $("#tc-filter-location").innerHTML = `<option value="">Tất cả điểm</option>` + activeLocations()
+    .map(([id, l]) => `<option value="${id}">${escapeHtml(l.name)}${l.type === "kitchen" ? " (bếp)" : ""}</option>`).join("");
+
+  const fromEl = $("#tc-from"), toEl = $("#tc-to");
+  const wkStart = mondayOf(todayISO());
+  fromEl.value = wkStart;
+  toEl.value = addDays(wkStart, 6);
+
+  $$("#tc-presets .chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const p = chip.dataset.preset;
+      const today = todayISO();
+      if (p === "week") { fromEl.value = mondayOf(today); toEl.value = addDays(mondayOf(today), 6); }
+      else if (p === "month") { fromEl.value = today.slice(0, 8) + "01"; toEl.value = today; }
+      else if (p === "7") { fromEl.value = addDays(today, -6); toEl.value = today; }
+      loadAndRenderThuChi();
+    });
+  });
+  fromEl.addEventListener("change", loadAndRenderThuChi);
+  toEl.addEventListener("change", loadAndRenderThuChi);
+  $("#tc-filter-loai").addEventListener("change", renderThuChiFiltered);
+  $("#tc-filter-location").addEventListener("change", renderThuChiFiltered);
+
+  $("#btn-tc-cancel").addEventListener("click", () => resetThuChiForm());
+
+  $("#form-thuchi").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const soTien = parseFloat($("#tc-sotien").value) || 0;
+    const danhMuc = $("#tc-danhmuc").value.trim();
+    if (!danhMuc) { toast("Nhập danh mục"); return; }
+    if (soTien <= 0) { toast("Nhập số tiền lớn hơn 0"); return; }
+    const payload = {
+      uid: currentUser.uid,
+      name: profile.name,
+      loai: $("#tc-loai").value === "thu" ? "thu" : "chi",
+      date: $("#tc-date").value,
+      danhMuc,
+      soTien,
+      locationId: $("#tc-location").value || "",
+      ghiChu: $("#tc-ghichu").value.trim(),
+      updatedAt: serverTimestamp(),
+    };
+    try {
+      if (editingThuChiId) {
+        await updateDoc(doc(db, "thuchi", editingThuChiId), payload);
+        toast("Đã cập nhật giao dịch");
+      } else {
+        payload.createdAt = serverTimestamp();
+        await addDoc(collection(db, "thuchi"), payload);
+        toast("Đã lưu giao dịch");
+      }
+      resetThuChiForm();
+      await loadAndRenderThuChi();
+    } catch (err) { console.error(err); toast("Lỗi khi lưu giao dịch"); }
+  });
+
+  await loadAndRenderThuChi();
+}
+
+function resetThuChiForm() {
+  editingThuChiId = null;
+  const f = $("#form-thuchi");
+  if (!f) return;
+  f.reset();
+  $("#tc-date").value = todayISO();
+  $("#tc-loai").value = "chi";
+  $("#btn-tc-cancel").hidden = true;
+}
+
+async function loadAndRenderThuChi() {
+  const listEl = $('[data-bind="tc-list"]');
+  const sumEl = $('[data-bind="tc-summary"]');
+  if (listEl) listEl.innerHTML = `<p class="empty-state">Đang tải…</p>`;
+  if (sumEl) sumEl.innerHTML = `<div class="stat-card"><div class="label">Đang tải…</div></div>`;
+  const from = $("#tc-from").value, to = $("#tc-to").value;
+  try {
+    thuChiCacheGlobal = await fetchThuChiByRange(from, to);
+    renderThuChiFiltered();
+  } catch (err) {
+    console.error(err);
+    if (listEl) listEl.innerHTML = emptyState("Không tải được dữ liệu");
+    if (sumEl) sumEl.innerHTML = `<div class="stat-card"><div class="label">Lỗi tải dữ liệu</div></div>`;
+  }
+}
+
+function renderThuChiFiltered() {
+  const loaiFilter = $("#tc-filter-loai").value;
+  const locFilter = $("#tc-filter-location").value;
+  let rows = thuChiCacheGlobal;
+  if (loaiFilter) rows = rows.filter((r) => r.loai === loaiFilter);
+  if (locFilter) rows = rows.filter((r) => r.locationId === locFilter);
+
+  const tongThu = rows.filter((r) => r.loai === "thu").reduce((s, r) => s + (r.soTien || 0), 0);
+  const tongChi = rows.filter((r) => r.loai === "chi").reduce((s, r) => s + (r.soTien || 0), 0);
+  const chenhLech = tongThu - tongChi;
+  const sumEl = $('[data-bind="tc-summary"]');
+  if (sumEl) {
+    sumEl.innerHTML = `
+      <div class="stat-card gold"><div class="label">Tổng thu</div><div class="value">${fmt(tongThu)}</div></div>
+      <div class="stat-card accent"><div class="label">Tổng chi</div><div class="value">${fmt(tongChi)}</div></div>
+      <div class="stat-card"><div class="label">Chênh lệch</div><div class="value">${fmt(chenhLech)}</div></div>
+    `;
+  }
+
+  const sorted = [...rows].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const listEl = $('[data-bind="tc-list"]');
+  if (listEl) listEl.innerHTML = renderThuChiCards(sorted) || emptyState("Không có giao dịch nào trong khoảng này");
+}
+
+function renderThuChiCards(rows) {
+  if (!rows.length) return "";
+  return rows.map((r) => `
+    <div class="entry-card" data-id="${r.id}">
+      <div class="entry-card-top">
+        <span class="entry-date">${formatDateVN(r.date)} · ${escapeHtml(r.name || staffName(r.uid))}</span>
+        <span class="${r.loai === "thu" ? "entry-total" : "entry-off-badge"}">${r.loai === "thu" ? "+" : "-"}${fmt(r.soTien)}</span>
+      </div>
+      <div class="entry-meta">
+        <span>${escapeHtml(r.danhMuc)}</span>
+        <span>${escapeHtml(tcLocationLabel(r.locationId))}</span>
+      </div>
+      ${r.ghiChu ? `<div class="entry-note">${escapeHtml(r.ghiChu)}</div>` : ""}
+      <div class="entry-row-actions">
+        <button class="link-btn" data-tc-edit="${r.id}">Sửa</button>
+        <button class="link-btn danger" data-tc-del="${r.id}">Xoá</button>
+      </div>
+    </div>
+  `).join("");
+}
+
 /* ===================== BÁO CÁO ===================== */
 async function renderBaoCao() {
   mount("bao-cao");
@@ -834,6 +1024,7 @@ async function renderBaoCao() {
 
 let reportEntriesCache = [];
 let reportIngCache = [];
+let reportThuChiCache = [];
 
 async function loadReport() {
   const from = $("#report-from").value, to = $("#report-to").value;
@@ -841,9 +1032,10 @@ async function loadReport() {
   const sumEl = $('[data-bind="report-summary"]');
   sumEl.innerHTML = `<div class="stat-card"><div class="label">Đang tải…</div></div>`;
   try {
-    [reportEntriesCache, reportIngCache] = await Promise.all([
+    [reportEntriesCache, reportIngCache, reportThuChiCache] = await Promise.all([
       fetchEntriesByRange(from, to),
       fetchIngredientsByRange(from, to),
+      fetchThuChiByRange(from, to),
     ]);
   } catch (err) {
     console.error(err);
@@ -861,13 +1053,20 @@ async function loadReport() {
   const selectedIsPoint = locFilter && locationsDirectory[locFilter]?.type === "point";
   const ingScoped = locFilter ? reportIngCache.filter((r) => r.locationId === locFilter) : reportIngCache;
   const chiPhiNL = selectedIsPoint ? 0 : ingScoped.reduce((s, r) => s + (r.tien || 0), 0);
-  const loiNhuan = doanhThu - chiPhiNL - luongThuong;
+
+  const tcScoped = locFilter ? reportThuChiCache.filter((r) => r.locationId === locFilter) : reportThuChiCache;
+  const thuKhac = tcScoped.filter((r) => r.loai === "thu").reduce((s, r) => s + (r.soTien || 0), 0);
+  const chiKhac = tcScoped.filter((r) => r.loai === "chi").reduce((s, r) => s + (r.soTien || 0), 0);
+
+  const loiNhuan = doanhThu - chiPhiNL - luongThuong + thuKhac - chiKhac;
 
   sumEl.innerHTML = `
     <div class="stat-card gold"><div class="label">Doanh thu ước tính</div><div class="value">${fmt(doanhThu)}</div></div>
     <div class="stat-card"><div class="label">Số lượng bán</div><div class="value">${fmtNum(tongSoLuong)}</div></div>
     <div class="stat-card accent"><div class="label">Chi phí nguyên liệu${selectedIsPoint ? " (—)" : ""}</div><div class="value">${fmt(chiPhiNL)}</div></div>
     <div class="stat-card accent"><div class="label">Lương + thưởng</div><div class="value">${fmt(luongThuong)}</div></div>
+    <div class="stat-card gold"><div class="label">Thu khác</div><div class="value">${fmt(thuKhac)}</div></div>
+    <div class="stat-card accent"><div class="label">Chi khác</div><div class="value">${fmt(chiKhac)}</div></div>
     <div class="stat-card"><div class="label">Lợi nhuận ước tính</div><div class="value">${fmt(loiNhuan)}</div></div>
   `;
   if (selectedIsPoint) {

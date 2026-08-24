@@ -56,6 +56,12 @@ service cloud.firestore {
       allow update, delete: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
     }
 
+    // Thu & chi khác ngoài lương/nguyên liệu (mặt bằng, điện nước, sửa chữa...) — chỉ chủ quán quản lý
+    match /thuchi/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
     // Quyết toán lương theo tuần (chỉ chủ quán chỉnh)
     match /settlements/{id} {
       allow read: if isSignedIn();
