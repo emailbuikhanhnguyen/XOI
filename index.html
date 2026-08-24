@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Sổ Xôi — Chấm công &amp; Doanh thu</title>
-<meta name="description" content="Sổ tay chấm công, tính lương, quản lý nguyên liệu và doanh thu cho quán xôi" />
+<meta name="description" content="Sổ tay chấm công, tính lương, quản lý bếp trung tâm, điểm bán, nguyên liệu và doanh thu cho quán xôi" />
 <meta name="theme-color" content="#3F6B4A" />
 <link rel="manifest" href="./manifest.webmanifest" />
 <link rel="icon" href="icons/icon-192.png" />
@@ -25,7 +25,7 @@
       </span>
       <div class="brand-text">
         <h1>Sổ Xôi</h1>
-        <p>Chấm công · Lương · Nguyên liệu · Doanh thu</p>
+        <p>Bếp trung tâm · Điểm bán · Lương · Nguyên liệu · Doanh thu</p>
       </div>
     </div>
 
@@ -42,7 +42,7 @@
       <button type="submit" class="btn btn-primary btn-block">Đăng nhập</button>
     </form>
 
-    <p class="login-hint">Chưa có tài khoản? Nhờ chủ quán tạo tài khoản cho bạn trong mục <em>Nhân viên</em>.</p>
+    <p class="login-hint">Chưa có tài khoản? Nhờ chủ quán tạo tài khoản cho bạn trong mục <em>Quản lý</em>.</p>
   </div>
 </section>
 
@@ -75,17 +75,17 @@
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
       <span>Chấm công</span>
     </button>
-    <button class="nav-item" data-view="nguyen-lieu">
+    <button class="nav-item" data-view="kho">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3h14l-1 6a6 6 0 0 1-12 0L5 3Z"/><path d="M9 21h6M12 15v6"/></svg>
-      <span>Nguyên liệu</span>
+      <span>Kho</span>
     </button>
     <button class="nav-item" data-view="bao-cao" data-admin-only="1">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
       <span>Báo cáo</span>
     </button>
-    <button class="nav-item" data-view="nhan-vien" data-admin-only="1">
+    <button class="nav-item" data-view="quan-ly" data-admin-only="1">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3"/><path d="M2 20c0-3.3 3-6 7-6s7 2.7 7 6"/><circle cx="18" cy="8" r="2.3"/><path d="M23 20c0-2.6-2-4.8-5-5.6"/></svg>
-      <span>Nhân viên</span>
+      <span>Quản lý</span>
     </button>
   </nav>
 </div>
@@ -100,6 +100,7 @@
       <div class="hero-stats" data-bind="hero-stats"></div>
     </div>
     <div class="section-block" data-bind="quick-actions"></div>
+    <div class="stat-grid" data-bind="home-by-location"></div>
     <h3 class="section-heading">Gần đây</h3>
     <div class="stack" data-bind="recent-list"></div>
   </section>
@@ -108,7 +109,7 @@
 <template id="tpl-cham-cong">
   <section class="view">
     <form id="form-entry" class="ticket ticket-form">
-      <p class="eyebrow">Phiếu chấm công</p>
+      <p class="eyebrow">Phiếu chấm công · <span data-bind="entry-location"></span></p>
       <div class="grid-2">
         <label class="field">
           <span>Ngày</span>
@@ -167,47 +168,111 @@
   </section>
 </template>
 
-<template id="tpl-nguyen-lieu">
+<template id="tpl-kho">
   <section class="view">
-    <form id="form-ing" class="ticket ticket-form">
-      <p class="eyebrow">Nhập nguyên liệu</p>
-      <label class="field">
-        <span>Ngày</span>
-        <input type="date" id="ing-date" required />
-      </label>
-      <div class="grid-2">
-        <label class="field">
-          <span>Gà (kg)</span>
-          <input type="number" inputmode="decimal" id="ing-ga" min="0" step="0.1" />
-        </label>
-        <label class="field">
-          <span>Nấm (gr)</span>
-          <input type="number" inputmode="numeric" id="ing-nam" min="0" step="1" />
-        </label>
-      </div>
-      <label class="field">
-        <span>Thành tiền (đ)</span>
-        <input type="number" inputmode="numeric" id="ing-tien" min="0" step="1000" required />
-      </label>
-      <label class="field">
-        <span>Ghi chú</span>
-        <input type="text" id="ing-ghichu" placeholder="VD: đã thanh toán" />
-      </label>
-      <div class="ticket-actions">
-        <button type="button" id="btn-ing-cancel" class="btn btn-ghost" hidden>Huỷ sửa</button>
-        <button type="submit" class="btn btn-primary">Lưu nguyên liệu</button>
-      </div>
-    </form>
+    <div data-bind="kho-readonly" hidden></div>
 
-    <h3 class="section-heading">Lịch sử nhập hàng</h3>
-    <div class="stack" data-bind="ing-list"></div>
+    <div data-bind="kho-manage" hidden>
+      <div class="ticket" style="margin-bottom:12px;" data-bind="kitchen-select"></div>
+
+      <form id="form-ing" class="ticket ticket-form">
+        <p class="eyebrow">Nhập nguyên liệu vào bếp</p>
+        <div class="grid-2">
+          <label class="field">
+            <span>Ngày</span>
+            <input type="date" id="ing-date" required />
+          </label>
+          <label class="field">
+            <span>Đơn vị</span>
+            <select id="ing-unit">
+              <option value="kg">kg</option>
+              <option value="gr">gr</option>
+              <option value="lít">lít</option>
+              <option value="cái">cái</option>
+              <option value="gói">gói</option>
+            </select>
+          </label>
+        </div>
+        <label class="field">
+          <span>Nguyên liệu</span>
+          <input type="text" id="ing-item" list="item-suggestions" placeholder="VD: Gà" required />
+        </label>
+        <div class="grid-2">
+          <label class="field">
+            <span>Số lượng</span>
+            <input type="number" inputmode="decimal" id="ing-qty" min="0" step="0.1" required />
+          </label>
+          <label class="field">
+            <span>Thành tiền (đ)</span>
+            <input type="number" inputmode="numeric" id="ing-tien" min="0" step="1000" />
+          </label>
+        </div>
+        <label class="field">
+          <span>Ghi chú</span>
+          <input type="text" id="ing-ghichu" placeholder="VD: đã thanh toán" />
+        </label>
+        <div class="ticket-actions">
+          <button type="button" id="btn-ing-cancel" class="btn btn-ghost" hidden>Huỷ sửa</button>
+          <button type="submit" class="btn btn-primary">Lưu nguyên liệu</button>
+        </div>
+      </form>
+      <h3 class="section-heading">Lịch sử nhập hàng</h3>
+      <div class="stack" data-bind="ing-list"></div>
+
+      <form id="form-trf" class="ticket ticket-form" style="margin-top:18px;">
+        <p class="eyebrow">Chuyển hàng cho điểm bán</p>
+        <div class="grid-2">
+          <label class="field">
+            <span>Ngày</span>
+            <input type="date" id="trf-date" required />
+          </label>
+          <label class="field">
+            <span>Điểm bán nhận</span>
+            <select id="trf-to"></select>
+          </label>
+        </div>
+        <div class="grid-2">
+          <label class="field">
+            <span>Mặt hàng</span>
+            <input type="text" id="trf-item" list="item-suggestions" placeholder="VD: Xôi gói sẵn" required />
+          </label>
+          <label class="field">
+            <span>Đơn vị</span>
+            <select id="trf-unit">
+              <option value="phần">phần</option>
+              <option value="kg">kg</option>
+              <option value="gr">gr</option>
+              <option value="cái">cái</option>
+              <option value="gói">gói</option>
+            </select>
+          </label>
+        </div>
+        <label class="field">
+          <span>Số lượng</span>
+          <input type="number" inputmode="decimal" id="trf-qty" min="0" step="0.1" required />
+        </label>
+        <label class="field">
+          <span>Ghi chú</span>
+          <input type="text" id="trf-ghichu" placeholder="VD: chuyến sáng" />
+        </label>
+        <div class="ticket-actions">
+          <button type="button" id="btn-trf-cancel" class="btn btn-ghost" hidden>Huỷ sửa</button>
+          <button type="submit" class="btn btn-primary">Lưu chuyển hàng</button>
+        </div>
+      </form>
+      <h3 class="section-heading">Lịch sử chuyển hàng</h3>
+      <div class="stack" data-bind="trf-list"></div>
+
+      <h3 class="section-heading">Tồn kho hiện tại</h3>
+      <div class="table-wrap" data-bind="stock-table"></div>
+    </div>
   </section>
 </template>
 
 <template id="tpl-bao-cao">
   <section class="view">
     <div class="ticket">
-      <p class="eyebrow">Khoảng thời gian</p>
+      <p class="eyebrow">Khoảng thời gian &amp; điểm bán</p>
       <div class="grid-2">
         <label class="field">
           <span>Từ ngày</span>
@@ -218,6 +283,10 @@
           <input type="date" id="report-to" />
         </label>
       </div>
+      <label class="field">
+        <span>Điểm bán</span>
+        <select id="report-location"></select>
+      </label>
       <div class="chip-row" id="report-presets">
         <button type="button" class="chip" data-preset="week">Tuần này</button>
         <button type="button" class="chip" data-preset="month">Tháng này</button>
@@ -226,6 +295,11 @@
     </div>
 
     <div class="stat-grid" data-bind="report-summary"></div>
+
+    <div data-bind="report-by-location-wrap">
+      <h3 class="section-heading">Theo điểm bán</h3>
+      <div class="table-wrap" data-bind="report-by-location"></div>
+    </div>
 
     <h3 class="section-heading">Theo nhân viên</h3>
     <div class="table-wrap" data-bind="report-by-staff"></div>
@@ -239,8 +313,44 @@
   </section>
 </template>
 
-<template id="tpl-nhan-vien">
+<template id="tpl-quan-ly">
   <section class="view">
+    <h3 class="section-heading">Điểm bán &amp; bếp trung tâm</h3>
+    <form id="form-location" class="ticket ticket-form">
+      <p class="eyebrow">Thêm / sửa điểm</p>
+      <label class="field">
+        <span>Tên điểm</span>
+        <input type="text" id="loc-name" required placeholder="VD: Bếp trung tâm, Điểm Quận 7..." />
+      </label>
+      <label class="field">
+        <span>Loại</span>
+        <select id="loc-type">
+          <option value="kitchen">Bếp trung tâm</option>
+          <option value="point" selected>Điểm bán</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Địa chỉ</span>
+        <input type="text" id="loc-address" />
+      </label>
+      <div class="grid-2">
+        <label class="field">
+          <span>Giá bán mỗi phần xôi (đ)</span>
+          <input type="number" inputmode="numeric" id="loc-giaban" min="0" step="500" />
+        </label>
+        <label class="field">
+          <span>Lương cơ bản mặc định / ngày (đ)</span>
+          <input type="number" inputmode="numeric" id="loc-luong" min="0" step="1000" />
+        </label>
+      </div>
+      <div class="ticket-actions">
+        <button type="button" id="btn-loc-cancel" class="btn btn-ghost" hidden>Huỷ sửa</button>
+        <button type="submit" class="btn btn-primary">Lưu điểm</button>
+      </div>
+    </form>
+    <div class="stack" data-bind="location-list"></div>
+
+    <h3 class="section-heading">Nhân viên</h3>
     <form id="form-staff" class="ticket ticket-form">
       <p class="eyebrow">Thêm nhân viên</p>
       <label class="field">
@@ -262,28 +372,15 @@
           <option value="admin">Chủ quán (quản trị)</option>
         </select>
       </label>
+      <label class="field">
+        <span>Điểm làm việc</span>
+        <select id="staff-location"></select>
+      </label>
       <div class="ticket-actions">
         <button type="submit" class="btn btn-primary">Tạo tài khoản</button>
       </div>
     </form>
-
-    <h3 class="section-heading">Danh sách nhân viên</h3>
     <div class="stack" data-bind="staff-list"></div>
-
-    <h3 class="section-heading">Cài đặt quán</h3>
-    <form id="form-settings" class="ticket ticket-form">
-      <label class="field">
-        <span>Giá bán mỗi phần xôi (đ)</span>
-        <input type="number" inputmode="numeric" id="setting-giaban" min="0" step="500" />
-      </label>
-      <label class="field">
-        <span>Lương cơ bản mặc định / ngày (đ)</span>
-        <input type="number" inputmode="numeric" id="setting-luong" min="0" step="1000" />
-      </label>
-      <div class="ticket-actions">
-        <button type="submit" class="btn btn-primary">Lưu cài đặt</button>
-      </div>
-    </form>
   </section>
 </template>
 

@@ -1,27 +1,35 @@
-# 🌿 Sổ Xôi — Chấm công · Lương · Nguyên liệu · Doanh thu
+# 🌿 Sổ Xôi — Bếp trung tâm · Điểm bán · Lương · Nguyên liệu · Doanh thu
 
-App web (PWA) thay thế bảng tính Google Sheets chấm công bán xôi. Nhiều nhân viên
-cùng nhập dữ liệu trên điện thoại, chủ quán xem báo cáo tổng hợp theo thời gian thực.
+App web (PWA) quản lý quán xôi có **1 bếp trung tâm + nhiều điểm bán**: chấm
+công/lương theo từng điểm, nguyên liệu & tồn kho ở bếp, chuyển hàng ra điểm
+bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ thống.
 
-## Tính năng
+## Mô hình dữ liệu
 
-- **Đăng nhập** theo tài khoản riêng cho từng người (email/mật khẩu), phân quyền
-  **Nhân viên** / **Chủ quán**.
-- **Chấm công**: mỗi ngày nhập lương cơ bản, số lượng bán, thưởng, tổng, số đơn
-  ship, số xôi ế/dẹp, ghi chú — giống hệt cấu trúc bảng "BẢNG CHẤM CÔNG TUẦN" cũ.
-  Có thể đánh dấu "Nghỉ". Sửa/xoá phiếu đã nhập trong lịch sử 7/30/90 ngày.
-- **Nguyên liệu**: nhập gà (kg), nấm (gr), thành tiền mỗi lần nhập hàng.
-- **Báo cáo (chủ quán)**: chọn khoảng ngày (tuần này/tháng này/7 ngày/tuỳ chọn) →
-  xem doanh thu ước tính, tổng số lượng bán, chi phí nguyên liệu, tổng lương +
-  thưởng, lợi nhuận ước tính, bảng theo từng nhân viên, biểu đồ doanh thu theo
-  ngày, và **quyết toán theo tuần** (điều chỉnh +/-, ghi chú giữ lại tiền thối,
-  đánh dấu đã thanh toán) — thay cho dòng "Thực nhận / đã TT" trong sheet cũ.
-  Có nút **xuất CSV**.
-- **Nhân viên (chủ quán)**: tạo tài khoản đăng nhập cho nhân viên mới, bật/tắt
-  tài khoản, cài đặt giá bán mỗi phần xôi (để tính doanh thu ước tính) và lương
-  cơ bản mặc định.
-- Là **PWA**: có thể "Thêm vào màn hình chính" trên điện thoại, dùng được khi
-  mất mạng ở mức xem lại giao diện (dữ liệu cần mạng để đồng bộ).
+- **Locations** (`locations`): danh sách các điểm — 1 hoặc nhiều **Bếp trung
+  tâm** (`type: kitchen`) và nhiều **Điểm bán** (`type: point`). Mỗi điểm có
+  giá bán/phần và lương cơ bản mặc định riêng.
+- **Nhân viên**: mỗi tài khoản được **gán vào đúng 1 điểm** (`locationId`).
+  Chấm công/doanh thu của nhân viên luôn gắn với điểm đó.
+- **Nguyên liệu** (`ingredients`): ghi nhận nhập hàng vào bếp trung tâm (tên
+  nguyên liệu tự do, đơn vị, số lượng, thành tiền).
+- **Chuyển hàng** (`transfers`): bếp trung tâm ghi nhận xuất hàng cho từng
+  điểm bán theo ngày. Điểm bán chỉ xem được (không sửa) danh sách đã nhận.
+- **Tồn kho bếp** = tổng đã nhập − tổng đã chuyển đi (tính trong 365 ngày gần
+  nhất), tính theo từng loại nguyên liệu.
+- **Báo cáo**: lọc theo khoảng ngày + theo điểm bán (hoặc "Tất cả điểm"), có
+  bảng so sánh từng điểm, bảng theo nhân viên, biểu đồ theo ngày, quyết toán
+  lương theo tuần, xuất CSV.
+
+## Tính năng theo vai trò
+
+- **Chủ quán (admin)**: thấy toàn bộ hệ thống — quản lý điểm bán/bếp, tạo tài
+  khoản nhân viên và gán điểm, xem kho + chuyển hàng ở mọi bếp, xem báo cáo
+  toàn hệ thống hoặc từng điểm.
+- **Nhân viên tại bếp trung tâm**: chấm công như bình thường, cộng thêm quyền
+  nhập nguyên liệu, ghi nhận chuyển hàng cho các điểm bán, xem tồn kho.
+- **Nhân viên tại điểm bán**: chấm công (lương, số lượng bán, thưởng, ship,
+  xôi ế/dẹp — giống bảng cũ), xem (không sửa) danh sách hàng đã nhận từ bếp.
 
 ## Cấu trúc file
 
@@ -33,7 +41,6 @@ firebase-config.js        Nơi bạn dán cấu hình project Firebase của mì
 firestore.rules           Luật bảo mật dữ liệu (deploy lên Firebase)
 manifest.webmanifest       Khai báo PWA
 sw.js                      Service worker (chạy offline phần giao diện)
-icons/                      Icon cài đặt lên màn hình điện thoại
 ```
 
 ## 1. Tạo Firebase project (miễn phí)
@@ -68,33 +75,43 @@ export const firebaseConfig = {
 
 ## 3. Deploy luật bảo mật Firestore
 
-Cách nhanh nhất (không cần cài gì): mở **Firestore Database → Rules** trong
-Firebase Console, xoá hết nội dung mặc định, dán toàn bộ nội dung file
-`firestore.rules` vào, bấm **Publish**.
+Mở **Firestore Database → Rules** trong Firebase Console, xoá hết nội dung
+mặc định, dán toàn bộ nội dung file `firestore.rules` vào, bấm **Publish**.
 
 ## 4. Tạo tài khoản Chủ quán đầu tiên
 
-Vì chỉ "Chủ quán" mới tạo được tài khoản khác trong app, tài khoản chủ quán
-**đầu tiên** cần tạo thủ công một lần:
+Vì chỉ "Chủ quán" mới tạo được điểm bán và tài khoản khác trong app, tài
+khoản chủ quán **đầu tiên** cần tạo thủ công một lần:
 
 1. **Authentication → Users → Add user** → nhập email + mật khẩu cho chính bạn.
 2. Copy **User UID** vừa tạo (cột UID trong danh sách).
-3. **Firestore Database → Start collection** → Collection ID: `users` → Document
-   ID: dán đúng UID vừa copy → thêm các field:
+3. **Firestore Database → Start collection** → Collection ID: `locations` →
+   tạo trước ít nhất 1 tài liệu bếp trung tâm, ví dụ Document ID để tự động,
+   các field:
+   - `name` (string): `Bếp trung tâm`
+   - `type` (string): `kitchen`
+   - `giaBan` (number): giá bán mỗi phần, vd `15000`
+   - `luongMacDinh` (number): lương cơ bản mặc định/ngày, vd `60000`
+   - `active` (boolean): `true`
+   - Ghi lại **Document ID** vừa tạo (đây chính là `locationId` của bếp).
+4. Tạo tiếp collection `users` → Document ID: dán đúng UID vừa copy ở bước 1
+   → thêm các field:
    - `name` (string): tên bạn, vd `Chị Hai`
    - `role` (string): `admin`
    - `email` (string): email vừa tạo
+   - `locationId` (string): Document ID của bếp trung tâm ở bước 3
    - `active` (boolean): `true`
-4. Lưu lại. Giờ bạn có thể đăng nhập vào app bằng email/mật khẩu này với vai
-   trò Chủ quán, và tự tạo tài khoản cho các nhân viên khác ngay trong app
-   (mục **Nhân viên**).
+5. Lưu lại. Giờ bạn có thể đăng nhập vào app bằng email/mật khẩu này với vai
+   trò Chủ quán. Vào mục **Quản lý** để thêm các điểm bán còn lại và tạo tài
+   khoản cho nhân viên (mục này tự gán `locationId` cho bạn, không cần thao
+   tác thủ công trên Firestore nữa từ đây trở đi).
 
 ## 5. Đưa lên GitHub và bật GitHub Pages
 
 ```bash
 git init
 git add .
-git commit -m "Sổ Xôi - chấm công & doanh thu"
+git commit -m "Sổ Xôi - bếp trung tâm & điểm bán"
 git branch -M main
 git remote add origin https://github.com/<tên-bạn>/<tên-repo>.git
 git push -u origin main
@@ -112,20 +129,26 @@ chính"** để dùng như một app thật.
 
 ## 6. Ghi chú vận hành
 
-- **Thưởng** không tự tính (mỗi quán có cách tính khác nhau tuỳ số ship/số dẹp),
-  bạn nhập tay và ghi chú lý do — giống cách làm trong sheet cũ.
-- **Tổng** tự cộng Lương + Thưởng khi bạn nhập, nhưng vẫn có thể sửa tay nếu
-  cần.
-- **Doanh thu ước tính** trong Báo cáo = Số lượng bán × Giá bán mỗi phần (đặt
-  ở mục Nhân viên → Cài đặt quán). Đây là ước tính, không thay cho sổ thu tiền
-  thực tế.
-- Mục **Quyết toán theo tuần** nhóm phiếu chấm công theo tuần Thứ 2 → Thứ 7,
-  cho phép chủ quán ghi số tiền điều chỉnh (giữ lại/thưởng thêm) và đánh dấu
-  đã thanh toán — thay cho các dòng "Thực nhận / đã TT / Giữ lại" trong sheet.
+- **Thưởng** không tự tính, bạn nhập tay và ghi chú lý do — giống cách làm
+  trong sheet cũ.
+- **Doanh thu ước tính** = Số lượng bán × Giá bán mỗi phần của **điểm bán đó**
+  (đặt riêng cho từng điểm ở mục Quản lý → Điểm bán). Đây là ước tính, không
+  thay cho sổ thu tiền thực tế.
+- **Chi phí nguyên liệu** phát sinh chung ở bếp trung tâm nên báo cáo không
+  tự chia đều cho từng điểm bán — xem tổng chi phí NL ở lựa chọn "Tất cả
+  điểm" hoặc chọn đúng bếp.
+- **Tồn kho** tính trên cửa sổ 365 ngày gần nhất (nhập − đã chuyển đi). Nếu
+  cần đối chiếu chính xác tuyệt đối, nên kiểm kho định kỳ ngoài đời và nhập
+  điều chỉnh bằng một dòng "nhập nguyên liệu" âm/dương kèm ghi chú lý do.
+- Đổi tên/giá bán/lương mặc định của 1 điểm ở mục Quản lý sẽ áp dụng cho các
+  phiếu **mới** từ lúc đó; phiếu cũ đã lưu không bị tính lại.
 
 ## Nâng cấp về sau (tuỳ chọn)
 
 - Thêm Cloud Functions để chủ quán tạo tài khoản nhân viên mà không cần mật
   khẩu tạm (gửi link mời qua email).
 - Thêm biểu đồ lợi nhuận theo tháng, xuất báo cáo PDF.
-- Thêm ghi nhận nhiều điểm bán nếu quán mở rộng.
+- Phân bổ chi phí nguyên liệu về từng điểm bán theo tỷ lệ số lượng bán, nếu
+  cần độ chính xác lợi nhuận theo điểm cao hơn.
+- Thêm bước kiểm kho định kỳ có ghi log điều chỉnh riêng (thay vì chỉ dựa vào
+  nhập − xuất).

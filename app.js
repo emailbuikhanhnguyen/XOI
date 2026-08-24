@@ -23,11 +23,17 @@ if ("serviceWorker" in navigator) {
 
 /* ===================== STATE ===================== */
 let currentUser = null;
-let profile = null; // { name, role, email }
-let staffDirectory = {}; // uid -> {name, role}
-let settings = { giaBan: 15000, luongMacDinh: 60000 };
+let profile = null; // { name, role, email, locationId }
+let staffDirectory = {}; // uid -> {name, role, locationId, active, email}
+let locationsDirectory = {}; // id -> {name, type: 'kitchen'|'point', address, giaBan, luongMacDinh, active}
+let settings = { giaBan: 15000, luongMacDinh: 60000 }; // fallback mặc định khi 1 điểm chưa cấu hình
 let editingEntryId = null;
 let editingIngId = null;
+let editingTransferId = null;
+let editingLocationId = null;
+
+const STOCK_WINDOW_DAYS = 365; // khoảng thời gian dùng để tính tồn kho / lịch sử gần đây
+const ITEM_SUGGESTIONS = ["Gà", "Nấm", "Gạo nếp", "Đậu xanh", "Dầu ăn", "Hành phi", "Gia vị", "Nước tương", "Túi/hộp gói"];
 
 /* ===================== HELPERS ===================== */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -67,6 +73,32 @@ function toast(msg) {
 }
 
 function staffName(uid) { return staffDirectory[uid]?.name || "Không rõ"; }
+function locationName(id) { return locationsDirectory[id]?.name || (id ? "(điểm đã xoá)" : "Chưa gán điểm"); }
+function locationGiaBan(id) { return locationsDirectory[id]?.giaBan ?? settings.giaBan ?? 0; }
+function isAdmin() { return profile?.role === "admin"; }
+function myLocation() { return locationsDirectory[profile?.locationId] || null; }
+function activeLocations() { return Object.entries(locationsDirectory).filter(([, l]) => l.active !== false); }
+function kitchenLocations() { return activeLocations().filter(([, l]) => l.type === "kitchen"); }
+function pointLocations() { return activeLocations().filter(([, l]) => l.type === "point"); }
+
+// Điểm bếp mà người dùng hiện tại thao tác nhập/xuất kho (mặc định điểm đầu tiên nếu là admin)
+function operatingKitchenId() {
+  if (myLocation()?.type === "kitchen") return profile.locationId;
+  const list = kitchenLocations();
+  return list.length ? list[0][0] : null;
+}
+function isKitchenContext() { return isAdmin() || myLocation()?.type === "kitchen"; }
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function emptyState(msg) {
+  return `<div class="empty-state">
+    <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 3h14l-1 6a6 6 0 0 1-12 0L5 3Z"/><path d="M9 21h6M12 15v6"/></svg>
+    <div>${msg}</div>
+  </div>`;
+}
 
 /* ===================== AUTH ===================== */
 $("#form-login").addEventListener("submit", async (e) => {
@@ -96,8 +128,7 @@ onAuthStateChanged(auth, async (user) => {
         return;
       }
       profile = snap.data();
-      await loadStaffDirectory();
-      await loadSettings();
+      await Promise.all([loadStaffDirectory(), loadLocationsDirectory(), loadSettings()]);
       showApp();
     } catch (err) {
       console.error(err);
@@ -121,9 +152,14 @@ function showApp() {
   $("#screen-login").hidden = true;
   $("#app").hidden = false;
   window.scrollTo(0, 0);
-  $("#user-chip").textContent = `${profile.name} · ${profile.role === "admin" ? "Chủ quán" : "Nhân viên"}`;
-  $$(".nav-item[data-admin-only]").forEach((btn) => { btn.hidden = profile.role !== "admin"; });
-  if (!location.hash || (profile.role !== "admin" && ["#/bao-cao", "#/nhan-vien"].includes(location.hash))) {
+  const roleLabel = isAdmin() ? "Chủ quán" : "Nhân viên";
+  const locLabel = profile.locationId ? " · " + locationName(profile.locationId) : "";
+  $("#user-chip").textContent = `${profile.name} · ${roleLabel}${locLabel}`;
+  $$(".nav-item[data-admin-only]").forEach((btn) => { btn.hidden = !isAdmin(); });
+  if (!isAdmin() && !profile.locationId) {
+    toast("Tài khoản của bạn chưa được gán điểm bán. Liên hệ chủ quán để được gán.");
+  }
+  if (!location.hash || (!isAdmin() && ["#/bao-cao", "#/quan-ly"].includes(location.hash))) {
     location.hash = "#/trang-chu";
   } else {
     router();
@@ -135,6 +171,12 @@ async function loadStaffDirectory() {
   const snap = await getDocs(collection(db, "users"));
   staffDirectory = {};
   snap.forEach((d) => { staffDirectory[d.id] = d.data(); });
+}
+
+async function loadLocationsDirectory() {
+  const snap = await getDocs(collection(db, "locations"));
+  locationsDirectory = {};
+  snap.forEach((d) => { locationsDirectory[d.id] = d.data(); });
 }
 
 async function loadSettings() {
@@ -161,14 +203,6 @@ async function fetchEntriesByRange(from, to) {
   return rows;
 }
 
-async function fetchIngredientsRecent(n = 60) {
-  const q = query(collection(db, "ingredients"), orderBy("date", "desc"), limit(n));
-  const snap = await getDocs(q);
-  const rows = [];
-  snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
-  return rows;
-}
-
 async function fetchIngredientsByRange(from, to) {
   const q = query(collection(db, "ingredients"), where("date", ">=", from), where("date", "<=", to), orderBy("date", "asc"));
   const snap = await getDocs(q);
@@ -177,11 +211,19 @@ async function fetchIngredientsByRange(from, to) {
   return rows;
 }
 
+async function fetchTransfersByRange(from, to) {
+  const q = query(collection(db, "transfers"), where("date", ">=", from), where("date", "<=", to), orderBy("date", "asc"));
+  const snap = await getDocs(q);
+  const rows = [];
+  snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
+  return rows;
+}
+
 /* ===================== ROUTER ===================== */
-const ADMIN_ONLY = ["bao-cao", "nhan-vien"];
+const ADMIN_ONLY = ["bao-cao", "quan-ly"];
 const TITLES = {
-  "trang-chu": "Trang chủ", "cham-cong": "Chấm công", "nguyen-lieu": "Nguyên liệu",
-  "bao-cao": "Báo cáo", "nhan-vien": "Nhân viên",
+  "trang-chu": "Trang chủ", "cham-cong": "Chấm công", "kho": "Kho & Chuyển hàng",
+  "bao-cao": "Báo cáo", "quan-ly": "Quản lý",
 };
 
 window.addEventListener("hashchange", router);
@@ -193,7 +235,7 @@ function router() {
   if (!profile) return;
   let view = (location.hash || "#/trang-chu").replace("#/", "");
   if (!TITLES[view]) view = "trang-chu";
-  if (ADMIN_ONLY.includes(view) && profile.role !== "admin") {
+  if (ADMIN_ONLY.includes(view) && !isAdmin()) {
     toast("Bạn không có quyền truy cập mục này.");
     view = "trang-chu";
     location.hash = "#/trang-chu";
@@ -204,9 +246,9 @@ function router() {
 
   if (view === "trang-chu") renderTrangChu();
   else if (view === "cham-cong") renderChamCong();
-  else if (view === "nguyen-lieu") renderNguyenLieu();
+  else if (view === "kho") renderKho();
   else if (view === "bao-cao") renderBaoCao();
-  else if (view === "nhan-vien") renderNhanVien();
+  else if (view === "quan-ly") renderQuanLy();
 }
 
 function mount(id) {
@@ -223,6 +265,7 @@ async function renderTrangChu() {
   const statsEl = $('[data-bind="hero-stats"]');
   const actionsEl = $('[data-bind="quick-actions"]');
   const recentEl = $('[data-bind="recent-list"]');
+  const byLocEl = $('[data-bind="home-by-location"]');
   statsEl.innerHTML = `<div class="hero-stat"><span class="num">…</span><span class="label">Đang tải</span></div>`;
 
   actionsEl.innerHTML = `
@@ -230,11 +273,11 @@ async function renderTrangChu() {
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
       Chấm công hôm nay
     </button>
-    <button class="quick-action" data-go="nguyen-lieu">
+    <button class="quick-action" data-go="kho">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3h14l-1 6a6 6 0 0 1-12 0L5 3Z"/><path d="M9 21h6M12 15v6"/></svg>
-      Nhập nguyên liệu
+      ${isKitchenContext() ? "Kho & chuyển hàng" : "Hàng đã nhận"}
     </button>
-    ${profile.role === "admin" ? `<button class="quick-action" data-go="bao-cao">
+    ${isAdmin() ? `<button class="quick-action" data-go="bao-cao">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
       Xem báo cáo
     </button>` : ""}
@@ -242,16 +285,26 @@ async function renderTrangChu() {
   $$("[data-go]", actionsEl).forEach((b) => b.addEventListener("click", () => { location.hash = "#/" + b.dataset.go; }));
 
   try {
-    if (profile.role === "admin") {
+    if (isAdmin()) {
       const today = todayISO();
       const rows = await fetchEntriesByRange(today, today);
-      const totalDoanhThu = rows.filter((r) => !r.offDay).reduce((s, r) => s + (r.soLuong || 0) * (settings.giaBan || 0), 0);
-      const soNVLam = new Set(rows.filter((r) => !r.offDay).map((r) => r.uid)).size;
+      const worked = rows.filter((r) => !r.offDay);
+      const totalDoanhThu = worked.reduce((s, r) => s + (r.soLuong || 0) * locationGiaBan(r.locationId), 0);
+      const soNVLam = new Set(worked.map((r) => r.uid)).size;
       statsEl.innerHTML = `
-        <div class="hero-stat"><span class="num">${fmt(totalDoanhThu)}</span><span class="label">Doanh thu ước tính hôm nay</span></div>
+        <div class="hero-stat"><span class="num">${fmt(totalDoanhThu)}</span><span class="label">Doanh thu ước tính hôm nay (tất cả điểm)</span></div>
         <div class="hero-stat"><span class="num">${soNVLam}</span><span class="label">Nhân viên đã chấm công</span></div>
       `;
-      recentEl.innerHTML = renderEntryCards(rows.slice(0, 6), true, false) || emptyState("Chưa có phiếu chấm công hôm nay");
+      recentEl.innerHTML = renderEntryCards(rows.slice(0, 6), true, false, true) || emptyState("Chưa có phiếu chấm công hôm nay");
+
+      if (byLocEl) {
+        const locs = activeLocations().filter(([, l]) => l.type === "point");
+        byLocEl.innerHTML = locs.length ? locs.map(([id, l]) => {
+          const locRows = worked.filter((r) => r.locationId === id);
+          const dt = locRows.reduce((s, r) => s + (r.soLuong || 0) * locationGiaBan(id), 0);
+          return `<div class="stat-card"><div class="label">${escapeHtml(l.name)}</div><div class="value">${fmt(dt)}</div></div>`;
+        }).join("") : emptyState("Chưa có điểm bán nào — vào mục Quản lý để thêm");
+      }
     } else {
       const rows = await fetchEntriesByUid(currentUser.uid);
       const todayRow = rows.find((r) => r.date === todayISO());
@@ -263,18 +316,12 @@ async function renderTrangChu() {
         <div class="hero-stat"><span class="num">${fmt(weekTotal)}</span><span class="label">Tuần này (tạm tính)</span></div>
       `;
       recentEl.innerHTML = renderEntryCards(rows.slice(0, 6), false, false) || emptyState("Bạn chưa có phiếu chấm công nào");
+      if (byLocEl) byLocEl.innerHTML = "";
     }
   } catch (err) {
     console.error(err);
     statsEl.innerHTML = `<div class="hero-stat"><span class="num">—</span><span class="label">Lỗi tải dữ liệu</span></div>`;
   }
-}
-
-function emptyState(msg) {
-  return `<div class="empty-state">
-    <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 3h14l-1 6a6 6 0 0 1-12 0L5 3Z"/><path d="M9 21h6M12 15v6"/></svg>
-    <div>${msg}</div>
-  </div>`;
 }
 
 /* ===================== CHẤM CÔNG ===================== */
@@ -283,9 +330,18 @@ let entryCacheForUser = [];
 async function renderChamCong() {
   mount("cham-cong");
   editingEntryId = null;
+
+  if (!isAdmin() && !profile.locationId) {
+    viewRoot.innerHTML = emptyState("Bạn chưa được gán điểm bán nên chưa thể chấm công. Liên hệ chủ quán.");
+    return;
+  }
+
+  const locBadge = $('[data-bind="entry-location"]');
+  if (locBadge) locBadge.textContent = locationName(profile.locationId);
+
   const dateEl = $("#entry-date");
   dateEl.value = todayISO();
-  $("#entry-luong").value = settings.luongMacDinh || "";
+  $("#entry-luong").value = locationsDirectory[profile.locationId]?.luongMacDinh ?? settings.luongMacDinh ?? "";
 
   const offEl = $("#entry-off");
   const workFields = $("#entry-work-fields");
@@ -309,6 +365,7 @@ async function renderChamCong() {
     const payload = {
       uid: currentUser.uid,
       name: profile.name,
+      locationId: profile.locationId,
       date: dateEl.value,
       offDay: off,
       luong: off ? 0 : (parseFloat(luongEl.value) || 0),
@@ -348,7 +405,7 @@ function resetEntryForm() {
   if (!f) return;
   f.reset();
   $("#entry-date").value = todayISO();
-  $("#entry-luong").value = settings.luongMacDinh || "";
+  $("#entry-luong").value = locationsDirectory[profile.locationId]?.luongMacDinh ?? settings.luongMacDinh ?? "";
   $("#btn-entry-cancel").hidden = true;
   $$("input", $("#entry-work-fields")).forEach((i) => (i.disabled = false));
 }
@@ -372,12 +429,12 @@ function renderEntryListFiltered() {
   $('[data-bind="entry-list"]').innerHTML = renderEntryCards(rows, false, true) || emptyState("Không có dữ liệu trong khoảng này");
 }
 
-function renderEntryCards(rows, showName, showActions = false) {
+function renderEntryCards(rows, showName, showActions = false, showLocation = false) {
   if (!rows.length) return "";
   return rows.map((r) => `
     <div class="entry-card" data-id="${r.id}">
       <div class="entry-card-top">
-        <span class="entry-date">${formatDateVN(r.date)}${showName ? " · " + (r.name || staffName(r.uid)) : ""}</span>
+        <span class="entry-date">${formatDateVN(r.date)}${showName ? " · " + (r.name || staffName(r.uid)) : ""}${showLocation ? " · " + escapeHtml(locationName(r.locationId)) : ""}</span>
         ${r.offDay ? '<span class="entry-off-badge">Nghỉ</span>' : `<span class="entry-total">${fmt(r.tong)}</span>`}
       </div>
       ${r.offDay ? "" : `
@@ -398,11 +455,7 @@ function renderEntryCards(rows, showName, showActions = false) {
   `).join("");
 }
 
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-
-// Event delegation for entry list edit/delete (view-root persists across renders)
+// Event delegation cho các nút sửa/xoá trong view-root (view-root tồn tại xuyên suốt các lần render)
 viewRoot.addEventListener("click", async (e) => {
   const editBtn = e.target.closest("[data-edit]");
   const delBtn = e.target.closest("[data-del]");
@@ -442,8 +495,9 @@ viewRoot.addEventListener("click", async (e) => {
     if (!row) return;
     editingIngId = id;
     $("#ing-date").value = row.date;
-    $("#ing-ga").value = row.gaKg || "";
-    $("#ing-nam").value = row.namGr || "";
+    $("#ing-item").value = row.itemName || "";
+    $("#ing-unit").value = row.unit || "kg";
+    $("#ing-qty").value = row.qty || "";
     $("#ing-tien").value = row.tien || "";
     $("#ing-ghichu").value = row.ghiChu || "";
     $("#btn-ing-cancel").hidden = false;
@@ -455,32 +509,149 @@ viewRoot.addEventListener("click", async (e) => {
     try {
       await deleteDoc(doc(db, "ingredients", id));
       toast("Đã xoá");
-      await loadAndRenderIngList();
+      await loadAndRenderKho();
     } catch (err) { console.error(err); toast("Không xoá được"); }
+  }
+
+  const trfEditBtn = e.target.closest("[data-trf-edit]");
+  const trfDelBtn = e.target.closest("[data-trf-del]");
+  if (trfEditBtn) {
+    const id = trfEditBtn.dataset.trfEdit;
+    const row = transferCacheGlobal.find((r) => r.id === id);
+    if (!row) return;
+    editingTransferId = id;
+    $("#trf-date").value = row.date;
+    $("#trf-to").value = row.toLocationId || "";
+    $("#trf-item").value = row.itemName || "";
+    $("#trf-unit").value = row.unit || "kg";
+    $("#trf-qty").value = row.qty || "";
+    $("#trf-ghichu").value = row.ghiChu || "";
+    $("#btn-trf-cancel").hidden = false;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  if (trfDelBtn) {
+    const id = trfDelBtn.dataset.trfDel;
+    if (!confirm("Xoá lần chuyển hàng này?")) return;
+    try {
+      await deleteDoc(doc(db, "transfers", id));
+      toast("Đã xoá");
+      await loadAndRenderKho();
+    } catch (err) { console.error(err); toast("Không xoá được"); }
+  }
+
+  const locEditBtn = e.target.closest("[data-loc-edit]");
+  const locToggleBtn = e.target.closest("[data-loc-toggle]");
+  if (locEditBtn) {
+    const id = locEditBtn.dataset.locEdit;
+    const l = locationsDirectory[id];
+    if (!l) return;
+    editingLocationId = id;
+    $("#loc-name").value = l.name || "";
+    $("#loc-type").value = l.type || "point";
+    $("#loc-address").value = l.address || "";
+    $("#loc-giaban").value = l.giaBan ?? "";
+    $("#loc-luong").value = l.luongMacDinh ?? "";
+    $("#btn-loc-cancel").hidden = false;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  if (locToggleBtn) {
+    const id = locToggleBtn.dataset.locToggle;
+    const l = locationsDirectory[id];
+    try {
+      await updateDoc(doc(db, "locations", id), { active: !(l.active !== false) });
+      toast("Đã cập nhật trạng thái điểm");
+      await loadLocationsDirectory();
+      renderLocationList();
+    } catch (err) { console.error(err); toast("Không cập nhật được"); }
   }
 });
 
-/* ===================== NGUYÊN LIỆU ===================== */
+/* ===================== KHO & CHUYỂN HÀNG ===================== */
 let ingCacheGlobal = [];
+let transferCacheGlobal = [];
 
-async function renderNguyenLieu() {
-  mount("nguyen-lieu");
+function itemDatalistHtml() {
+  return `<datalist id="item-suggestions">${ITEM_SUGGESTIONS.map((s) => `<option value="${escapeHtml(s)}"></option>`).join("")}</datalist>`;
+}
+
+async function renderKho() {
+  mount("kho");
   editingIngId = null;
+  editingTransferId = null;
+  viewRoot.insertAdjacentHTML("beforeend", itemDatalistHtml());
+
+  const kitchenMode = isKitchenContext();
+  const readonlyEl = $('[data-bind="kho-readonly"]');
+  const manageEl = $('[data-bind="kho-manage"]');
+
+  if (!kitchenMode) {
+    // Điểm bán: chỉ xem hàng đã nhận từ bếp, không nhập/xuất được
+    manageEl.hidden = true;
+    readonlyEl.hidden = false;
+    if (!profile.locationId) {
+      readonlyEl.innerHTML = emptyState("Bạn chưa được gán điểm bán.");
+      return;
+    }
+    readonlyEl.innerHTML = `<p class="empty-state">Đang tải…</p>`;
+    try {
+      const from = addDays(todayISO(), -STOCK_WINDOW_DAYS);
+      const all = await fetchTransfersByRange(from, todayISO());
+      const mine = all.filter((r) => r.toLocationId === profile.locationId).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 40);
+      readonlyEl.innerHTML = `<h3 class="section-heading">Đã nhận từ bếp trung tâm</h3>
+        <div class="stack">${renderTransferCards(mine, false)}</div>` .replace('<div class="stack"></div>', emptyState("Chưa nhận hàng nào từ bếp trung tâm"));
+    } catch (err) {
+      console.error(err);
+      readonlyEl.innerHTML = emptyState("Không tải được dữ liệu");
+    }
+    return;
+  }
+
+  readonlyEl.hidden = true;
+  manageEl.hidden = false;
+
+  const kLocs = kitchenLocations();
+  const kitchenSelectWrap = $('[data-bind="kitchen-select"]');
+  if (!kLocs.length) {
+    manageEl.innerHTML = emptyState("Chưa có bếp trung tâm nào — vào mục Quản lý để thêm điểm loại “Bếp trung tâm”.");
+    return;
+  }
+  let opKitchenId = operatingKitchenId();
+  if (kitchenSelectWrap) {
+    if (isAdmin() && kLocs.length > 1) {
+      kitchenSelectWrap.innerHTML = `<label class="field"><span>Bếp</span>
+        <select id="kho-kitchen-select">${kLocs.map(([id, l]) => `<option value="${id}" ${id === opKitchenId ? "selected" : ""}>${escapeHtml(l.name)}</option>`).join("")}</select>
+      </label>`;
+      $("#kho-kitchen-select").addEventListener("change", (e) => { opKitchenId = e.target.value; loadAndRenderKho(opKitchenId); });
+    } else {
+      kitchenSelectWrap.innerHTML = `<p class="eyebrow">Bếp: ${escapeHtml(locationName(opKitchenId))}</p>`;
+    }
+  }
+
   $("#ing-date").value = todayISO();
+  $("#trf-date").value = todayISO();
+  const trfToSel = $("#trf-to");
+  const pLocs = pointLocations();
+  trfToSel.innerHTML = pLocs.length
+    ? pLocs.map(([id, l]) => `<option value="${id}">${escapeHtml(l.name)}</option>`).join("")
+    : `<option value="">(chưa có điểm bán)</option>`;
 
   $("#btn-ing-cancel").addEventListener("click", () => resetIngForm());
+  $("#btn-trf-cancel").addEventListener("click", () => resetTrfForm());
 
   $("#form-ing").addEventListener("submit", async (e) => {
     e.preventDefault();
     const payload = {
       uid: currentUser.uid,
+      locationId: opKitchenId,
       date: $("#ing-date").value,
-      gaKg: parseFloat($("#ing-ga").value) || 0,
-      namGr: parseFloat($("#ing-nam").value) || 0,
+      itemName: $("#ing-item").value.trim(),
+      unit: $("#ing-unit").value,
+      qty: parseFloat($("#ing-qty").value) || 0,
       tien: parseFloat($("#ing-tien").value) || 0,
       ghiChu: $("#ing-ghichu").value.trim(),
       updatedAt: serverTimestamp(),
     };
+    if (!payload.itemName) { toast("Nhập tên nguyên liệu"); return; }
     try {
       if (editingIngId) {
         await updateDoc(doc(db, "ingredients", editingIngId), payload);
@@ -491,11 +662,41 @@ async function renderNguyenLieu() {
         toast("Đã lưu nguyên liệu");
       }
       resetIngForm();
-      await loadAndRenderIngList();
+      await loadAndRenderKho(opKitchenId);
     } catch (err) { console.error(err); toast("Lỗi khi lưu"); }
   });
 
-  await loadAndRenderIngList();
+  $("#form-trf").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const toId = $("#trf-to").value;
+    if (!toId) { toast("Chọn điểm bán nhận hàng"); return; }
+    const payload = {
+      uid: currentUser.uid,
+      fromLocationId: opKitchenId,
+      toLocationId: toId,
+      date: $("#trf-date").value,
+      itemName: $("#trf-item").value.trim(),
+      unit: $("#trf-unit").value,
+      qty: parseFloat($("#trf-qty").value) || 0,
+      ghiChu: $("#trf-ghichu").value.trim(),
+      updatedAt: serverTimestamp(),
+    };
+    if (!payload.itemName) { toast("Nhập tên hàng chuyển"); return; }
+    try {
+      if (editingTransferId) {
+        await updateDoc(doc(db, "transfers", editingTransferId), payload);
+        toast("Đã cập nhật");
+      } else {
+        payload.createdAt = serverTimestamp();
+        await addDoc(collection(db, "transfers"), payload);
+        toast("Đã ghi nhận chuyển hàng");
+      }
+      resetTrfForm();
+      await loadAndRenderKho(opKitchenId);
+    } catch (err) { console.error(err); toast("Lỗi khi lưu"); }
+  });
+
+  await loadAndRenderKho(opKitchenId);
 }
 
 function resetIngForm() {
@@ -507,13 +708,59 @@ function resetIngForm() {
   $("#btn-ing-cancel").hidden = true;
 }
 
-async function loadAndRenderIngList() {
-  const list = $('[data-bind="ing-list"]');
-  list.innerHTML = `<p class="empty-state">Đang tải…</p>`;
+function resetTrfForm() {
+  editingTransferId = null;
+  const f = $("#form-trf");
+  if (!f) return;
+  f.reset();
+  $("#trf-date").value = todayISO();
+  $("#btn-trf-cancel").hidden = true;
+}
+
+async function loadAndRenderKho(opKitchenId = operatingKitchenId()) {
+  const ingListEl = $('[data-bind="ing-list"]');
+  const trfListEl = $('[data-bind="trf-list"]');
+  const stockEl = $('[data-bind="stock-table"]');
+  if (ingListEl) ingListEl.innerHTML = `<p class="empty-state">Đang tải…</p>`;
+  if (trfListEl) trfListEl.innerHTML = `<p class="empty-state">Đang tải…</p>`;
+  if (stockEl) stockEl.innerHTML = `<p class="empty-state">Đang tải…</p>`;
   try {
-    ingCacheGlobal = await fetchIngredientsRecent(60);
-    list.innerHTML = renderIngCards(ingCacheGlobal) || emptyState("Chưa có dữ liệu nguyên liệu");
-  } catch (err) { console.error(err); list.innerHTML = emptyState("Không tải được"); }
+    const from = addDays(todayISO(), -STOCK_WINDOW_DAYS);
+    const to = todayISO();
+    const [allIng, allTrf] = await Promise.all([fetchIngredientsByRange(from, to), fetchTransfersByRange(from, to)]);
+    ingCacheGlobal = allIng.filter((r) => r.locationId === opKitchenId).sort((a, b) => (a.date < b.date ? 1 : -1));
+    transferCacheGlobal = allTrf.filter((r) => r.fromLocationId === opKitchenId).sort((a, b) => (a.date < b.date ? 1 : -1));
+
+    if (ingListEl) ingListEl.innerHTML = renderIngCards(ingCacheGlobal.slice(0, 30)) || emptyState(`Chưa có nguyên liệu nhập trong ${STOCK_WINDOW_DAYS} ngày qua`);
+    if (trfListEl) trfListEl.innerHTML = renderTransferCards(transferCacheGlobal.slice(0, 30), true) || emptyState("Chưa chuyển hàng cho điểm bán nào");
+
+    if (stockEl) {
+      const stock = {};
+      ingCacheGlobal.forEach((r) => {
+        const k = r.itemName + "||" + r.unit;
+        stock[k] = stock[k] || { itemName: r.itemName, unit: r.unit, ton: 0 };
+        stock[k].ton += r.qty || 0;
+      });
+      transferCacheGlobal.forEach((r) => {
+        const k = r.itemName + "||" + r.unit;
+        stock[k] = stock[k] || { itemName: r.itemName, unit: r.unit, ton: 0 };
+        stock[k].ton -= r.qty || 0;
+      });
+      const rows = Object.values(stock).sort((a, b) => a.itemName.localeCompare(b.itemName));
+      stockEl.innerHTML = rows.length ? `
+        <table class="data-table">
+          <thead><tr><th>Nguyên liệu</th><th>Đơn vị</th><th>Tồn hiện tại</th></tr></thead>
+          <tbody>${rows.map((r) => `<tr><td>${escapeHtml(r.itemName)}</td><td>${escapeHtml(r.unit)}</td><td><b>${fmtNum(r.ton)}</b></td></tr>`).join("")}</tbody>
+        </table>
+        <p class="hint-text">Tồn kho tính trong ${STOCK_WINDOW_DAYS} ngày gần nhất (nhập − đã chuyển đi).</p>
+      ` : emptyState("Chưa có dữ liệu tồn kho");
+    }
+  } catch (err) {
+    console.error(err);
+    if (ingListEl) ingListEl.innerHTML = emptyState("Không tải được");
+    if (trfListEl) trfListEl.innerHTML = emptyState("Không tải được");
+    if (stockEl) stockEl.innerHTML = emptyState("Không tải được");
+  }
 }
 
 function renderIngCards(rows) {
@@ -525,14 +772,32 @@ function renderIngCards(rows) {
         <span class="entry-total">${fmt(r.tien)}</span>
       </div>
       <div class="entry-meta">
-        ${r.gaKg ? `<span>Gà: <b>${fmtNum(r.gaKg)} kg</b></span>` : ""}
-        ${r.namGr ? `<span>Nấm: <b>${fmtNum(r.namGr)} gr</b></span>` : ""}
+        <span>${escapeHtml(r.itemName)}: <b>${fmtNum(r.qty)} ${escapeHtml(r.unit)}</b></span>
       </div>
       ${r.ghiChu ? `<div class="entry-note">${escapeHtml(r.ghiChu)}</div>` : ""}
       <div class="entry-row-actions">
         <button class="link-btn" data-ing-edit="${r.id}">Sửa</button>
         <button class="link-btn danger" data-ing-del="${r.id}">Xoá</button>
       </div>
+    </div>
+  `).join("");
+}
+
+function renderTransferCards(rows, showActions) {
+  if (!rows.length) return "";
+  return rows.map((r) => `
+    <div class="ing-card" data-id="${r.id}">
+      <div class="entry-card-top">
+        <span class="entry-date">${formatDateVN(r.date)}${showActions ? " · " + escapeHtml(locationName(r.toLocationId)) : ""}</span>
+        <span class="entry-total">${fmtNum(r.qty)} ${escapeHtml(r.unit)}</span>
+      </div>
+      <div class="entry-meta"><span>${escapeHtml(r.itemName)}${!showActions ? " · từ " + escapeHtml(locationName(r.fromLocationId)) : ""}</span></div>
+      ${r.ghiChu ? `<div class="entry-note">${escapeHtml(r.ghiChu)}</div>` : ""}
+      ${showActions ? `
+      <div class="entry-row-actions">
+        <button class="link-btn" data-trf-edit="${r.id}">Sửa</button>
+        <button class="link-btn danger" data-trf-del="${r.id}">Xoá</button>
+      </div>` : ""}
     </div>
   `).join("");
 }
@@ -544,6 +809,11 @@ async function renderBaoCao() {
   const wkStart = mondayOf(todayISO());
   fromEl.value = wkStart;
   toEl.value = addDays(wkStart, 5);
+
+  const locSel = $("#report-location");
+  locSel.innerHTML = `<option value="">Tất cả điểm</option>` + activeLocations()
+    .map(([id, l]) => `<option value="${id}">${escapeHtml(l.name)}${l.type === "kitchen" ? " (bếp)" : ""}</option>`).join("");
+  locSel.addEventListener("change", loadReport);
 
   $$("#report-presets .chip").forEach((chip) => {
     chip.addEventListener("click", () => {
@@ -567,6 +837,7 @@ let reportIngCache = [];
 
 async function loadReport() {
   const from = $("#report-from").value, to = $("#report-to").value;
+  const locFilter = $("#report-location").value;
   const sumEl = $('[data-bind="report-summary"]');
   sumEl.innerHTML = `<div class="stat-card"><div class="label">Đang tải…</div></div>`;
   try {
@@ -580,31 +851,70 @@ async function loadReport() {
     return;
   }
 
-  const worked = reportEntriesCache.filter((r) => !r.offDay);
+  const allWorked = reportEntriesCache.filter((r) => !r.offDay);
+  const worked = locFilter ? allWorked.filter((r) => r.locationId === locFilter) : allWorked;
+
   const tongSoLuong = worked.reduce((s, r) => s + (r.soLuong || 0), 0);
-  const doanhThu = worked.reduce((s, r) => s + (r.soLuong || 0) * (settings.giaBan || 0), 0);
-  const chiPhiNL = reportIngCache.reduce((s, r) => s + (r.tien || 0), 0);
+  const doanhThu = worked.reduce((s, r) => s + (r.soLuong || 0) * locationGiaBan(r.locationId), 0);
   const luongThuong = worked.reduce((s, r) => s + (r.tong || 0), 0);
+
+  const selectedIsPoint = locFilter && locationsDirectory[locFilter]?.type === "point";
+  const ingScoped = locFilter ? reportIngCache.filter((r) => r.locationId === locFilter) : reportIngCache;
+  const chiPhiNL = selectedIsPoint ? 0 : ingScoped.reduce((s, r) => s + (r.tien || 0), 0);
   const loiNhuan = doanhThu - chiPhiNL - luongThuong;
 
   sumEl.innerHTML = `
     <div class="stat-card gold"><div class="label">Doanh thu ước tính</div><div class="value">${fmt(doanhThu)}</div></div>
     <div class="stat-card"><div class="label">Số lượng bán</div><div class="value">${fmtNum(tongSoLuong)}</div></div>
-    <div class="stat-card accent"><div class="label">Chi phí nguyên liệu</div><div class="value">${fmt(chiPhiNL)}</div></div>
+    <div class="stat-card accent"><div class="label">Chi phí nguyên liệu${selectedIsPoint ? " (—)" : ""}</div><div class="value">${fmt(chiPhiNL)}</div></div>
     <div class="stat-card accent"><div class="label">Lương + thưởng</div><div class="value">${fmt(luongThuong)}</div></div>
     <div class="stat-card"><div class="label">Lợi nhuận ước tính</div><div class="value">${fmt(loiNhuan)}</div></div>
   `;
+  if (selectedIsPoint) {
+    sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Chi phí nguyên liệu phát sinh chung ở bếp trung tâm nên không chia theo từng điểm bán — xem ở lựa chọn "Tất cả điểm" hoặc điểm bếp.</p>`);
+  }
 
-  renderByStaffTable(worked);
+  renderByLocationTable(allWorked, reportIngCache, locFilter);
+  renderByStaffTable(worked, !locFilter);
   renderDailyBarChart(worked, from, to);
-  await renderSettlements(reportEntriesCache);
+  await renderSettlements(worked);
 }
 
-function renderByStaffTable(worked) {
+function renderByLocationTable(allWorked, allIng, locFilter) {
+  const el = $('[data-bind="report-by-location"]');
+  const wrap = $('[data-bind="report-by-location-wrap"]');
+  if (!el || !wrap) return;
+  if (locFilter) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  const groups = {};
+  allWorked.forEach((r) => {
+    const id = r.locationId || "__none";
+    groups[id] = groups[id] || { name: locationName(r.locationId), soLuong: 0, doanhThu: 0, luongThuong: 0 };
+    groups[id].soLuong += r.soLuong || 0;
+    groups[id].doanhThu += (r.soLuong || 0) * locationGiaBan(r.locationId);
+    groups[id].luongThuong += r.tong || 0;
+  });
+  const rows = Object.values(groups).sort((a, b) => b.doanhThu - a.doanhThu);
+  if (!rows.length) { el.innerHTML = emptyState("Chưa có dữ liệu"); return; }
+  const chiPhiNLTong = allIng.reduce((s, r) => s + (r.tien || 0), 0);
+  el.innerHTML = `
+    <table class="data-table">
+      <thead><tr><th>Điểm bán</th><th>Số lượng</th><th>Doanh thu</th><th>Lương+thưởng</th><th>Lãi (chưa trừ NL)</th></tr></thead>
+      <tbody>
+        ${rows.map((g) => `<tr><td>${escapeHtml(g.name)}</td><td>${fmtNum(g.soLuong)}</td><td>${fmt(g.doanhThu)}</td><td>${fmt(g.luongThuong)}</td><td><b>${fmt(g.doanhThu - g.luongThuong)}</b></td></tr>`).join("")}
+      </tbody>
+    </table>
+    <p class="hint-text">Chi phí nguyên liệu toàn hệ thống (dùng chung ở bếp trung tâm): <b>${fmt(chiPhiNLTong)}</b> — chưa phân bổ vào từng điểm ở bảng trên.</p>
+  `;
+}
+
+function renderByStaffTable(worked, showLocationCol) {
   const groups = {};
   worked.forEach((r) => {
-    groups[r.uid] = groups[r.uid] || { name: r.name || staffName(r.uid), soNgay: 0, soLuong: 0, luong: 0, thuong: 0, tong: 0 };
-    const g = groups[r.uid];
+    groups[r.uid + "_" + (r.locationId || "")] = groups[r.uid + "_" + (r.locationId || "")] || {
+      name: r.name || staffName(r.uid), locationId: r.locationId, soNgay: 0, soLuong: 0, luong: 0, thuong: 0, tong: 0,
+    };
+    const g = groups[r.uid + "_" + (r.locationId || "")];
     g.soNgay++; g.soLuong += r.soLuong || 0; g.luong += r.luong || 0; g.thuong += r.thuong || 0; g.tong += r.tong || 0;
   });
   const rows = Object.values(groups).sort((a, b) => b.tong - a.tong);
@@ -612,9 +922,9 @@ function renderByStaffTable(worked) {
   if (!rows.length) { el.innerHTML = emptyState("Chưa có phiếu chấm công trong khoảng này"); return; }
   el.innerHTML = `
     <table class="data-table">
-      <thead><tr><th>Nhân viên</th><th>Ngày làm</th><th>Số lượng</th><th>Lương</th><th>Thưởng</th><th>Tổng nhận</th></tr></thead>
+      <thead><tr><th>Nhân viên</th>${showLocationCol ? "<th>Điểm bán</th>" : ""}<th>Ngày làm</th><th>Số lượng</th><th>Lương</th><th>Thưởng</th><th>Tổng nhận</th></tr></thead>
       <tbody>
-        ${rows.map((g) => `<tr><td>${escapeHtml(g.name)}</td><td>${g.soNgay}</td><td>${fmtNum(g.soLuong)}</td><td>${fmt(g.luong)}</td><td>${fmt(g.thuong)}</td><td><b>${fmt(g.tong)}</b></td></tr>`).join("")}
+        ${rows.map((g) => `<tr><td>${escapeHtml(g.name)}</td>${showLocationCol ? `<td>${escapeHtml(locationName(g.locationId))}</td>` : ""}<td>${g.soNgay}</td><td>${fmtNum(g.soLuong)}</td><td>${fmt(g.luong)}</td><td>${fmt(g.thuong)}</td><td><b>${fmt(g.tong)}</b></td></tr>`).join("")}
       </tbody>
     </table>
   `;
@@ -622,7 +932,7 @@ function renderByStaffTable(worked) {
 
 function renderDailyBarChart(worked, from, to) {
   const byDay = {};
-  worked.forEach((r) => { byDay[r.date] = (byDay[r.date] || 0) + (r.soLuong || 0) * (settings.giaBan || 0); });
+  worked.forEach((r) => { byDay[r.date] = (byDay[r.date] || 0) + (r.soLuong || 0) * locationGiaBan(r.locationId); });
   const days = [];
   let d = from;
   let guard = 0;
@@ -646,7 +956,7 @@ function renderDailyBarChart(worked, from, to) {
 
 async function renderSettlements(entries) {
   const groups = {};
-  entries.filter((r) => !r.offDay).forEach((r) => {
+  entries.forEach((r) => {
     const wk = mondayOf(r.date);
     const key = r.uid + "_" + wk;
     groups[key] = groups[key] || { uid: r.uid, name: r.name || staffName(r.uid), week: wk, total: 0 };
@@ -719,9 +1029,10 @@ async function renderSettlements(entries) {
 
 function exportCsv() {
   const from = $("#report-from").value, to = $("#report-to").value;
-  const rows = [["Ngày", "Nhân viên", "Lương", "Số lượng", "Thưởng", "Tổng", "Ship", "Xôi ế/dẹp", "Ghi chú"]];
-  reportEntriesCache.forEach((r) => {
-    rows.push([r.date, r.name || staffName(r.uid), r.offDay ? "Nghỉ" : r.luong, r.offDay ? "" : r.soLuong,
+  const locFilter = $("#report-location").value;
+  const rows = [["Ngày", "Điểm bán", "Nhân viên", "Lương", "Số lượng", "Thưởng", "Tổng", "Ship", "Xôi ế/dẹp", "Ghi chú"]];
+  reportEntriesCache.filter((r) => !locFilter || r.locationId === locFilter).forEach((r) => {
+    rows.push([r.date, locationName(r.locationId), r.name || staffName(r.uid), r.offDay ? "Nghỉ" : r.luong, r.offDay ? "" : r.soLuong,
       r.offDay ? "" : r.thuong, r.offDay ? 0 : r.tong, r.ship || "", r.dep || "", (r.ghiChu || "").replace(/\n/g, " ")]);
   });
   const csv = "\uFEFF" + rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -733,9 +1044,38 @@ function exportCsv() {
   URL.revokeObjectURL(a.href);
 }
 
-/* ===================== NHÂN VIÊN ===================== */
-async function renderNhanVien() {
-  mount("nhan-vien");
+/* ===================== QUẢN LÝ (Điểm bán + Nhân viên) ===================== */
+async function renderQuanLy() {
+  mount("quan-ly");
+
+  $("#form-location").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const payload = {
+      name: $("#loc-name").value.trim(),
+      type: $("#loc-type").value,
+      address: $("#loc-address").value.trim(),
+      giaBan: parseFloat($("#loc-giaban").value) || 0,
+      luongMacDinh: parseFloat($("#loc-luong").value) || 0,
+      updatedAt: serverTimestamp(),
+    };
+    if (!payload.name) { toast("Nhập tên điểm"); return; }
+    try {
+      if (editingLocationId) {
+        await updateDoc(doc(db, "locations", editingLocationId), payload);
+        toast("Đã cập nhật điểm bán");
+      } else {
+        payload.active = true;
+        payload.createdAt = serverTimestamp();
+        await addDoc(collection(db, "locations"), payload);
+        toast("Đã thêm điểm bán");
+      }
+      resetLocationForm();
+      await loadLocationsDirectory();
+      renderLocationList();
+      populateStaffLocationSelect();
+    } catch (err) { console.error(err); toast("Không lưu được điểm bán"); }
+  });
+  $("#btn-loc-cancel").addEventListener("click", () => resetLocationForm());
 
   $("#form-staff").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -743,6 +1083,8 @@ async function renderNhanVien() {
     const email = $("#staff-email").value.trim();
     const password = $("#staff-password").value;
     const role = $("#staff-role").value;
+    const staffLocationId = $("#staff-location").value;
+    if (!staffLocationId) { toast("Chọn điểm bán cho nhân viên"); return; }
     const btn = e.submitter;
     btn.disabled = true;
     try {
@@ -751,7 +1093,7 @@ async function renderNhanVien() {
       try {
         const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
         await setDoc(doc(db, "users", cred.user.uid), {
-          name, role, email, active: true, createdAt: serverTimestamp(),
+          name, role, email, locationId: staffLocationId, active: true, createdAt: serverTimestamp(),
         });
         await signOut(secondaryAuth);
       } finally {
@@ -769,21 +1111,52 @@ async function renderNhanVien() {
     }
   });
 
-  $("#form-settings").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const giaBan = parseFloat($("#setting-giaban").value) || 0;
-    const luongMacDinh = parseFloat($("#setting-luong").value) || 0;
-    try {
-      await setDoc(doc(db, "settings", "general"), { giaBan, luongMacDinh, updatedAt: serverTimestamp() }, { merge: true });
-      settings.giaBan = giaBan; settings.luongMacDinh = luongMacDinh;
-      toast("Đã lưu cài đặt");
-    } catch (err) { console.error(err); toast("Không lưu được cài đặt"); }
-  });
-  $("#setting-giaban").value = settings.giaBan || "";
-  $("#setting-luong").value = settings.luongMacDinh || "";
-
+  populateStaffLocationSelect();
+  renderLocationList();
   await loadStaffDirectory();
   renderStaffList();
+}
+
+function resetLocationForm() {
+  editingLocationId = null;
+  const f = $("#form-location");
+  if (!f) return;
+  f.reset();
+  $("#btn-loc-cancel").hidden = true;
+}
+
+function populateStaffLocationSelect() {
+  const sel = $("#staff-location");
+  if (!sel) return;
+  const locs = activeLocations();
+  sel.innerHTML = locs.length
+    ? locs.map(([id, l]) => `<option value="${id}">${escapeHtml(l.name)}${l.type === "kitchen" ? " (bếp)" : ""}</option>`).join("")
+    : `<option value="">(chưa có điểm nào — thêm điểm bán trước)</option>`;
+}
+
+function renderLocationList() {
+  const el = $('[data-bind="location-list"]');
+  if (!el) return;
+  const rows = Object.entries(locationsDirectory).sort((a, b) => (a[1].type === "kitchen" ? -1 : 1) - (b[1].type === "kitchen" ? -1 : 1));
+  if (!rows.length) { el.innerHTML = emptyState("Chưa có điểm bán nào — thêm bếp trung tâm và các điểm bán ở form trên"); return; }
+  el.innerHTML = rows.map(([id, l]) => `
+    <div class="staff-card" data-id="${id}">
+      <div class="entry-card-top">
+        <span class="entry-date">${escapeHtml(l.name)}</span>
+        <span class="${l.type === "kitchen" ? "badge-paid" : "badge-unpaid"}" style="background:${l.type === "kitchen" ? "var(--gold-tint)" : "var(--green-tint)"};color:${l.type === "kitchen" ? "var(--gold)" : "var(--green-dark)"}">${l.type === "kitchen" ? "Bếp trung tâm" : "Điểm bán"}</span>
+      </div>
+      <div class="entry-meta">
+        <span>Giá bán: <b>${fmt(l.giaBan)}</b></span>
+        <span>Lương mặc định: <b>${fmt(l.luongMacDinh)}</b></span>
+        ${l.address ? `<span>${escapeHtml(l.address)}</span>` : ""}
+      </div>
+      ${l.active === false ? `<div class="entry-note">Đã ngừng hoạt động</div>` : ""}
+      <div class="entry-row-actions">
+        <button class="link-btn" data-loc-edit="${id}">Sửa</button>
+        <button class="link-btn" data-loc-toggle="${id}">${l.active === false ? "Kích hoạt lại" : "Ngừng hoạt động"}</button>
+      </div>
+    </div>
+  `).join("");
 }
 
 function renderStaffList() {
@@ -797,7 +1170,7 @@ function renderStaffList() {
         <span class="entry-date">${escapeHtml(u.name || "(chưa đặt tên)")}</span>
         <span class="${u.role === "admin" ? "badge-paid" : "badge-unpaid"}" style="background:${u.role === "admin" ? "var(--gold-tint)" : "var(--green-tint)"};color:${u.role === "admin" ? "var(--gold)" : "var(--green-dark)"}">${u.role === "admin" ? "Chủ quán" : "Nhân viên"}</span>
       </div>
-      <div class="entry-meta"><span>${escapeHtml(u.email || "")}</span></div>
+      <div class="entry-meta"><span>${escapeHtml(u.email || "")}</span><span>${escapeHtml(locationName(u.locationId))}</span></div>
       ${uid !== currentUser.uid ? `<div class="entry-row-actions">
         <button class="link-btn" data-toggle-active="${uid}">${u.active === false ? "Kích hoạt lại" : "Vô hiệu hoá"}</button>
       </div>` : `<div class="entry-note">Tài khoản của bạn</div>`}

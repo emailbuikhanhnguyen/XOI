@@ -293,7 +293,9 @@ button, input, select, textarea { font-family: inherit; color: inherit; }
 .stat-card.accent .value { color: var(--chili); }
 .stat-card.gold .value { color: var(--gold); }
 
+.hint-text { font-size: 12px; color: var(--ink-soft); margin: 8px 2px 0; line-height: 1.5; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); box-shadow: var(--shadow-sm); }
+.table-wrap + .hint-text { margin-top: 8px; }
 table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.data-table th, table.data-table td {
   padding: 10px 12px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line);
