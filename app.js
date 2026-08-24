@@ -457,7 +457,7 @@ function renderEntryCards(rows, showName, showActions = false, showLocation = fa
         <span>Số lượng: <b>${fmtNum(r.soLuong)}</b></span>
         <span>Thưởng: <b>${fmt(r.thuong)}</b></span>
         ${r.ship ? `<span>Ship: <b>${fmtNum(r.ship)}</b></span>` : ""}
-        ${r.dep ? `<span>Xôi ế/dẹp: <b>${fmtNum(r.dep)}</b></span>` : ""}
+        ${r.dep ? `<span>Xôi ship/dẹp: <b>${fmtNum(r.dep)}</b></span>` : ""}
       </div>`}
       ${r.ghiChu ? `<div class="entry-note">${escapeHtml(r.ghiChu)}</div>` : ""}
       ${showActions ? `
@@ -1229,7 +1229,7 @@ async function renderSettlements(entries) {
 function exportCsv() {
   const from = $("#report-from").value, to = $("#report-to").value;
   const locFilter = $("#report-location").value;
-  const rows = [["Ngày", "Điểm bán", "Nhân viên", "Lương", "Số lượng", "Thưởng", "Tổng", "Ship", "Xôi ế/dẹp", "Ghi chú"]];
+  const rows = [["Ngày", "Điểm bán", "Nhân viên", "Lương", "Số lượng", "Thưởng", "Tổng", "Ship", "Xôi ship/dẹp", "Ghi chú"]];
   reportEntriesCache.filter((r) => !locFilter || r.locationId === locFilter).forEach((r) => {
     rows.push([r.date, locationName(r.locationId), r.name || staffName(r.uid), r.offDay ? "Nghỉ" : r.luong, r.offDay ? "" : r.soLuong,
       r.offDay ? "" : r.thuong, r.offDay ? 0 : r.tong, r.ship || "", r.dep || "", (r.ghiChu || "").replace(/\n/g, " ")]);
