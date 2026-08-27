@@ -376,9 +376,13 @@ async function renderChamCong() {
   $("#form-entry").addEventListener("submit", async (e) => {
     e.preventDefault();
     const off = offEl.checked;
+    if (!profile.locationId) {
+      toast("Tài khoản của bạn chưa được gán điểm bán. Vào Quản lý > Nhân sự để gán điểm bán trước khi chấm công.");
+      return;
+    }
     const payload = {
       uid: currentUser.uid,
-      name: profile.name,
+      name: profile.name || "",
       locationId: profile.locationId,
       date: dateEl.value,
       offDay: off,
@@ -404,7 +408,7 @@ async function renderChamCong() {
       await loadAndRenderEntryList();
     } catch (err) {
       console.error(err);
-      toast("Lỗi khi lưu phiếu. Thử lại nhé.");
+      toast("Lỗi khi lưu phiếu: " + (err.message || "Thử lại nhé."));
     }
   });
 
