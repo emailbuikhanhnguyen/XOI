@@ -585,6 +585,19 @@ viewRoot.addEventListener("click", async (e) => {
 
   const locEditBtn = e.target.closest("[data-loc-edit]");
   const locToggleBtn = e.target.closest("[data-loc-toggle]");
+  const locDelBtn = e.target.closest("[data-loc-del]");
+  if (locDelBtn) {
+    const id = locDelBtn.dataset.locDel;
+    const l = locationsDirectory[id];
+    if (!confirm(`Xoá điểm bán "${l?.name || ""}"? Chỉ nên xoá nếu điểm này chưa có phiếu chấm công / dữ liệu nào gắn vào.`)) return;
+    try {
+      await deleteDoc(doc(db, "locations", id));
+      toast("Đã xoá điểm bán");
+      await loadLocationsDirectory();
+      renderLocationList();
+      populateStaffLocationSelect();
+    } catch (err) { console.error(err); toast("Không xoá được: " + (err.message || "")); }
+  }
   if (locEditBtn) {
     const id = locEditBtn.dataset.locEdit;
     const l = locationsDirectory[id];
@@ -1280,6 +1293,28 @@ async function renderQuanLy() {
   });
   $("#btn-loc-cancel").addEventListener("click", () => resetLocationForm());
 
+  const cleanTestBtn = $("#btn-loc-clean-test");
+  if (cleanTestBtn) {
+    cleanTestBtn.addEventListener("click", async () => {
+      const testEntries = Object.entries(locationsDirectory).filter(([, l]) => (l.name || "").trim().toUpperCase().startsWith("TEST"));
+      if (!testEntries.length) { toast("Không có điểm nào tên bắt đầu bằng TEST"); return; }
+      if (!confirm(`Xoá ${testEntries.length} điểm bán có tên bắt đầu bằng "TEST"? Không thể hoàn tác.`)) return;
+      cleanTestBtn.disabled = true;
+      try {
+        await Promise.all(testEntries.map(([id]) => deleteDoc(doc(db, "locations", id))));
+        toast(`Đã xoá ${testEntries.length} điểm TEST`);
+        await loadLocationsDirectory();
+        renderLocationList();
+        populateStaffLocationSelect();
+      } catch (err) {
+        console.error(err);
+        toast("Không xoá hết được: " + (err.message || ""));
+      } finally {
+        cleanTestBtn.disabled = false;
+      }
+    });
+  }
+
   $("#form-staff").addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = $("#staff-name").value.trim();
@@ -1357,6 +1392,7 @@ function renderLocationList() {
       <div class="entry-row-actions">
         <button class="link-btn" data-loc-edit="${id}">Sửa</button>
         <button class="link-btn" data-loc-toggle="${id}">${l.active === false ? "Kích hoạt lại" : "Ngừng hoạt động"}</button>
+        <button class="link-btn danger" data-loc-del="${id}">Xoá</button>
       </div>
     </div>
   `).join("");
