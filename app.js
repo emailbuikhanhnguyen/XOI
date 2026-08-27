@@ -1293,6 +1293,75 @@ async function renderQuanLy() {
   });
   $("#btn-loc-cancel").addEventListener("click", () => resetLocationForm());
 
+  const cleanAllBtn = $("#btn-clean-all-test");
+  if (cleanAllBtn) {
+    cleanAllBtn.addEventListener("click", async () => {
+      if (!confirm("Xoá TOÀN BỘ dữ liệu test (phiếu chấm công, nhập kho, chuyển hàng, thu chi của nhân viên TEST NV hoặc gắn với điểm bán đã xoá, và các tài khoản TEST NV)? Không thể hoàn tác.")) return;
+      cleanAllBtn.disabled = true;
+      try {
+        const validLocIds = new Set(Object.keys(locationsDirectory));
+        const testStaffUids = new Set(
+          Object.entries(staffDirectory)
+            .filter(([, u]) => (u.name || "").trim().toUpperCase().startsWith("TEST NV"))
+            .map(([uid]) => uid)
+        );
+
+        let deletedCount = 0;
+
+        const entriesSnap = await getDocs(collection(db, "entries"));
+        for (const d of entriesSnap.docs) {
+          const r = d.data();
+          if (testStaffUids.has(r.uid) || (r.name || "").trim().toUpperCase().startsWith("TEST NV") || (r.locationId && !validLocIds.has(r.locationId))) {
+            await deleteDoc(doc(db, "entries", d.id));
+            deletedCount++;
+          }
+        }
+
+        const ingSnap = await getDocs(collection(db, "ingredients"));
+        for (const d of ingSnap.docs) {
+          const r = d.data();
+          if (r.locationId && !validLocIds.has(r.locationId)) {
+            await deleteDoc(doc(db, "ingredients", d.id));
+            deletedCount++;
+          }
+        }
+
+        const trfSnap = await getDocs(collection(db, "transfers"));
+        for (const d of trfSnap.docs) {
+          const r = d.data();
+          if ((r.fromLocationId && !validLocIds.has(r.fromLocationId)) || (r.toLocationId && !validLocIds.has(r.toLocationId))) {
+            await deleteDoc(doc(db, "transfers", d.id));
+            deletedCount++;
+          }
+        }
+
+        const tcSnap = await getDocs(collection(db, "thuchi"));
+        for (const d of tcSnap.docs) {
+          const r = d.data();
+          if (r.locationId && !validLocIds.has(r.locationId)) {
+            await deleteDoc(doc(db, "thuchi", d.id));
+            deletedCount++;
+          }
+        }
+
+        for (const uid of testStaffUids) {
+          await deleteDoc(doc(db, "users", uid));
+          deletedCount++;
+        }
+
+        toast(`Đã dọn ${deletedCount} bản ghi test`);
+        await Promise.all([loadStaffDirectory(), loadLocationsDirectory()]);
+        renderLocationList();
+        renderStaffList();
+        populateStaffLocationSelect();
+      } catch (err) {
+        console.error(err);
+        toast("Không dọn hết được: " + (err.message || ""));
+      } finally {
+        cleanAllBtn.disabled = false;
+      }
+    });
+  }
   const cleanTestBtn = $("#btn-loc-clean-test");
   if (cleanTestBtn) {
     cleanTestBtn.addEventListener("click", async () => {
