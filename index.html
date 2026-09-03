@@ -343,8 +343,36 @@
       <div class="stack" data-bind="trf-list"></div>
       <button type="button" class="btn btn-ghost btn-loadmore" data-bind="trf-list-more" hidden>Xem thêm</button>
 
-      <h3 class="section-heading">Tồn kho hiện tại</h3>
+      <div class="section-row">
+        <h3 class="section-heading">Tồn kho hiện tại</h3>
+        <button type="button" class="link-btn" data-bind="stocktake-toggle">Kiểm kê kho</button>
+      </div>
       <div class="table-wrap" data-bind="stock-table"></div>
+
+      <div data-bind="stocktake-section" hidden>
+        <h3 class="section-heading">Kiểm kê kho (đối chiếu tồn thực tế)</h3>
+        <p class="hint-text">Nhập số đếm được thực tế cho từng nguyên liệu — dùng để nhập tồn kho ban đầu (khi mới bắt đầu dùng app) hoặc đối chiếu định kỳ. Hệ thống tự tính chênh lệch và ghi 1 dòng "nhập nguyên liệu" điều chỉnh (âm hoặc dương) cho từng nguyên liệu bạn Lưu — không ảnh hưởng các nguyên liệu chưa nhập.</p>
+        <div class="table-wrap" data-bind="stocktake-table"></div>
+        <div class="grid-2" style="margin-top:14px;">
+          <label class="field">
+            <span>Thêm nguyên liệu khác vào danh sách</span>
+            <input type="text" id="stocktake-new-item" list="item-suggestions" placeholder="VD: Muối" />
+          </label>
+          <label class="field">
+            <span>Đơn vị</span>
+            <select id="stocktake-new-unit">
+              <option value="kg">kg</option>
+              <option value="gr">gr</option>
+              <option value="lít">lít</option>
+              <option value="cái">cái</option>
+              <option value="gói">gói</option>
+            </select>
+          </label>
+        </div>
+        <div class="ticket-actions">
+          <button type="button" class="btn btn-ghost" id="btn-stocktake-add">+ Thêm vào danh sách kiểm kê</button>
+        </div>
+      </div>
     </div>
   </section>
 </template>

@@ -161,9 +161,11 @@ chính"** để dùng như một app thật.
 - **Chi phí nguyên liệu** phát sinh chung ở bếp trung tâm nên báo cáo không
   tự chia đều cho từng điểm bán — xem tổng chi phí NL ở lựa chọn "Tất cả
   điểm" hoặc chọn đúng bếp.
-- **Tồn kho** tính trên cửa sổ 365 ngày gần nhất (nhập − đã chuyển đi). Nếu
-  cần đối chiếu chính xác tuyệt đối, nên kiểm kho định kỳ ngoài đời và nhập
-  điều chỉnh bằng một dòng "nhập nguyên liệu" âm/dương kèm ghi chú lý do.
+- **Tồn kho** tính trên cửa sổ 365 ngày gần nhất (nhập − đã chuyển đi). Ở màn
+  Kho (bếp/admin), bấm **"Kiểm kê kho"** cạnh bảng Tồn kho hiện tại để nhập
+  tồn kho ban đầu hoặc đối chiếu định kỳ: nhập số đếm thực tế cho từng
+  nguyên liệu, hệ thống tự tính chênh lệch và ghi 1 dòng "nhập nguyên liệu"
+  điều chỉnh (âm hoặc dương) — không cần tính tay.
 - Đổi tên/giá bán/lương mặc định của 1 điểm ở mục Quản lý sẽ áp dụng cho các
   phiếu **mới** từ lúc đó; phiếu cũ đã lưu không bị tính lại.
 

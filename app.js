@@ -1039,6 +1039,10 @@ viewRoot.addEventListener("click", async (e) => {
 let ingCacheGlobal = [];
 let transferCacheGlobal = [];
 let ordersCacheGlobal = [];
+// Nguyên liệu người dùng tự thêm vào danh sách Kiểm kê kho (chưa từng có
+// lịch sử nhập/chuyển nào ở bếp này) — chỉ tồn tại phía client cho tới khi
+// bấm Lưu, lúc đó mới ghi thành 1 dòng "nhập nguyên liệu" điều chỉnh thật sự.
+let stocktakeExtraItems = [];
 
 function itemDatalistHtml() {
   return `<datalist id="item-suggestions">${ITEM_SUGGESTIONS.map((s) => `<option value="${escapeHtml(s)}"></option>`).join("")}</datalist>`;
@@ -1119,6 +1123,27 @@ async function renderKho() {
       kitchenSelectWrap.innerHTML = `<p class="eyebrow">Bếp: ${escapeHtml(locationName(opKitchenId))}</p>`;
     }
   }
+
+  stocktakeExtraItems = [];
+  const stocktakeSection = $('[data-bind="stocktake-section"]');
+  const stocktakeToggle = $('[data-bind="stocktake-toggle"]');
+  if (stocktakeSection) stocktakeSection.hidden = true;
+  if (stocktakeToggle) {
+    stocktakeToggle.textContent = "Kiểm kê kho";
+    stocktakeToggle.addEventListener("click", () => {
+      const show = stocktakeSection.hidden;
+      stocktakeSection.hidden = !show;
+      stocktakeToggle.textContent = show ? "Ẩn kiểm kê kho" : "Kiểm kê kho";
+    });
+  }
+  $("#btn-stocktake-add")?.addEventListener("click", () => {
+    const name = $("#stocktake-new-item").value.trim();
+    const unit = $("#stocktake-new-unit").value;
+    if (!name) { toast("Nhập tên nguyên liệu cần thêm"); return; }
+    if (!stocktakeExtraItems.some((r) => r.itemName === name)) stocktakeExtraItems.push({ itemName: name, unit });
+    $("#stocktake-new-item").value = "";
+    renderStockTakeTable(opKitchenId);
+  });
 
   $("#ing-date").value = todayISO();
   $("#trf-date").value = todayISO();
@@ -1231,17 +1256,7 @@ async function loadAndRenderKho(opKitchenId = operatingKitchenId()) {
     renderTrfListUI();
 
     if (stockEl) {
-      const stock = {};
-      ingCacheGlobal.forEach((r) => {
-        const k = r.itemName + "||" + r.unit;
-        stock[k] = stock[k] || { itemName: r.itemName, unit: r.unit, ton: 0 };
-        stock[k].ton += r.qty || 0;
-      });
-      transferCacheGlobal.forEach((r) => {
-        const k = r.itemName + "||" + r.unit;
-        stock[k] = stock[k] || { itemName: r.itemName, unit: r.unit, ton: 0 };
-        stock[k].ton -= r.qty || 0;
-      });
+      const stock = computeStockMap();
       const rows = Object.values(stock).sort((a, b) => a.itemName.localeCompare(b.itemName));
       const lowRows = rows.filter((r) => {
         const th = itemCatalog[r.itemName]?.threshold;
@@ -1265,12 +1280,114 @@ async function loadAndRenderKho(opKitchenId = operatingKitchenId()) {
         <p class="hint-text">Tồn kho tính trong ${STOCK_WINDOW_DAYS} ngày gần nhất (nhập − đã chuyển đi).</p>
       ` : emptyState("Chưa có dữ liệu tồn kho");
     }
+    renderStockTakeTable(opKitchenId);
   } catch (err) {
     console.error(err);
     if (ingListEl) ingListEl.innerHTML = emptyState("Không tải được");
     if (trfListEl) trfListEl.innerHTML = emptyState("Không tải được");
     if (stockEl) stockEl.innerHTML = emptyState("Không tải được");
   }
+}
+
+// Tồn kho = tổng đã nhập − tổng đã chuyển đi, gộp theo tên nguyên liệu + đơn
+// vị. Dùng chung cho cả bảng "Tồn kho hiện tại" và bảng "Kiểm kê kho".
+function computeStockMap() {
+  const stock = {};
+  ingCacheGlobal.forEach((r) => {
+    const k = r.itemName + "||" + r.unit;
+    stock[k] = stock[k] || { itemName: r.itemName, unit: r.unit, ton: 0 };
+    stock[k].ton += r.qty || 0;
+  });
+  transferCacheGlobal.forEach((r) => {
+    const k = r.itemName + "||" + r.unit;
+    stock[k] = stock[k] || { itemName: r.itemName, unit: r.unit, ton: 0 };
+    stock[k].ton -= r.qty || 0;
+  });
+  return stock;
+}
+
+// Bảng "Kiểm kê kho": liệt kê mọi nguyên liệu đã biết (đã từng nhập/chuyển ở
+// bếp này, đã đặt định mức, nằm trong gợi ý mặc định, hoặc người dùng tự
+// thêm) kèm tồn hệ thống đang tính, để đối chiếu với số đếm thực tế. Bấm Lưu
+// trên 1 dòng sẽ ghi 1 chứng từ "nhập nguyên liệu" bằng đúng phần chênh lệch
+// (âm hoặc dương) — không đụng tới các nguyên liệu khác chưa Lưu.
+function renderStockTakeTable(opKitchenId) {
+  const el = $('[data-bind="stocktake-table"]');
+  if (!el) return;
+  const stock = computeStockMap();
+  const stockByName = {};
+  Object.values(stock).forEach((r) => { stockByName[r.itemName] = r; });
+
+  const names = new Set([
+    ...Object.values(stock).map((r) => r.itemName),
+    ...Object.keys(itemCatalog),
+    ...ITEM_SUGGESTIONS,
+    ...stocktakeExtraItems.map((r) => r.itemName),
+  ]);
+  const rows = Array.from(names).filter(Boolean).sort((a, b) => a.localeCompare(b, "vi")).map((name) => {
+    const stockRow = stockByName[name];
+    const extra = stocktakeExtraItems.find((r) => r.itemName === name);
+    const unit = stockRow?.unit || itemCatalog[name]?.unit || extra?.unit || "kg";
+    const computed = stockRow?.ton || 0;
+    return { itemName: name, unit, computed };
+  });
+
+  if (!rows.length) { el.innerHTML = emptyState("Chưa có nguyên liệu nào — thêm ở form bên dưới"); return; }
+
+  el.innerHTML = `
+    <table class="data-table">
+      <thead><tr><th>Nguyên liệu</th><th>Đơn vị</th><th>Tồn hệ thống</th><th>Tồn thực tế</th><th>Đơn giá/đvị (tuỳ chọn)</th><th></th></tr></thead>
+      <tbody>
+        ${rows.map((r) => `
+          <tr data-item="${escapeHtml(r.itemName)}" data-unit="${escapeHtml(r.unit)}" data-computed="${r.computed}">
+            <td>${escapeHtml(r.itemName)}</td>
+            <td>${escapeHtml(r.unit)}</td>
+            <td>${fmtNum(r.computed)}</td>
+            <td><input type="number" class="stk-actual" min="0" step="0.01" placeholder="${fmtNum(r.computed)}" style="width:88px" /></td>
+            <td><input type="number" class="stk-gia" min="0" step="1000" placeholder="đ" style="width:78px" /></td>
+            <td><button type="button" class="link-btn stk-save">Lưu</button></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+
+  $$(".stk-save", el).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const tr = btn.closest("tr");
+      const name = tr.dataset.item;
+      const unit = tr.dataset.unit;
+      const computed = parseFloat(tr.dataset.computed) || 0;
+      const actualStr = $(".stk-actual", tr).value.trim();
+      if (actualStr === "") { toast("Nhập số tồn thực tế trước khi lưu"); return; }
+      const actual = parseFloat(actualStr) || 0;
+      const delta = actual - computed;
+      if (Math.abs(delta) < 1e-9) { toast("Không có thay đổi — số đã khớp với hệ thống"); return; }
+      const donGia = delta > 0 ? (parseFloat($(".stk-gia", tr).value) || 0) : 0;
+      btn.disabled = true;
+      const payload = {
+        uid: currentUser.uid,
+        locationId: opKitchenId,
+        date: todayISO(),
+        itemName: name,
+        unit,
+        qty: delta,
+        tien: donGia * delta,
+        ghiChu: `Kiểm kê kho: chỉnh tồn từ ${fmtNum(computed)} thành ${fmtNum(actual)} ${unit}`,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+      await saveOp(
+        () => addDoc(collection(db, "ingredients"), payload),
+        async (confirmed) => {
+          toast(confirmed ? `Đã cập nhật tồn "${name}"` : "Đã lưu (chưa có mạng — sẽ tự đồng bộ)");
+          stocktakeExtraItems = stocktakeExtraItems.filter((r) => r.itemName !== name);
+          await loadAndRenderKho(opKitchenId);
+        }
+      );
+      btn.disabled = false;
+    });
+  });
 }
 
 function renderOrderCards(rows, forKitchen) {
