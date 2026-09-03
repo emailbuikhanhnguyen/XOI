@@ -280,7 +280,20 @@ async function renderTrangChu() {
   const actionsEl = $('[data-bind="quick-actions"]');
   const recentEl = $('[data-bind="recent-list"]');
   const byLocEl = $('[data-bind="home-by-location"]');
+  const attendanceBlockEl = $('[data-bind="attendance-block"]');
+  const attendanceDateEl = $("#attendance-date");
   statsEl.innerHTML = `<div class="hero-stat"><span class="num">…</span><span class="label">Đang tải</span></div>`;
+
+  if (isAdmin()) {
+    if (attendanceBlockEl) attendanceBlockEl.hidden = false;
+    if (attendanceDateEl) {
+      attendanceDateEl.value = todayISO();
+      attendanceDateEl.max = todayISO();
+      attendanceDateEl.addEventListener("change", () => renderAttendanceStatus(attendanceDateEl.value));
+    }
+  } else if (attendanceBlockEl) {
+    attendanceBlockEl.hidden = true;
+  }
 
   actionsEl.innerHTML = `
     <button class="quick-action" data-go="cham-cong">
@@ -319,6 +332,7 @@ async function renderTrangChu() {
           return `<div class="stat-card"><div class="label">${escapeHtml(l.name)}</div><div class="value">${fmt(dt)}</div></div>`;
         }).join("") : emptyState("Chưa có điểm bán nào — vào mục Quản lý để thêm");
       }
+      await renderAttendanceStatus(todayISO());
     } else {
       const rows = await fetchEntriesByUid(currentUser.uid);
       const todayRow = rows.find((r) => r.date === todayISO());
@@ -335,6 +349,67 @@ async function renderTrangChu() {
   } catch (err) {
     console.error(err);
     statsEl.innerHTML = `<div class="hero-stat"><span class="num">—</span><span class="label">Lỗi tải dữ liệu</span></div>`;
+  }
+}
+
+// Điểm danh chấm công theo ngày (chỉ chủ quán): xem nhanh nhân viên nào
+// đã tự chấm công / chưa chấm công / nghỉ, không cần lục trong báo cáo.
+async function renderAttendanceStatus(dateStr) {
+  const listEl = $('[data-bind="attendance-list"]');
+  const sumEl = $('[data-bind="attendance-summary"]');
+  if (!listEl) return;
+  listEl.innerHTML = `<p class="empty-state">Đang tải…</p>`;
+  if (sumEl) sumEl.innerHTML = "";
+  try {
+    const rows = await fetchEntriesByRange(dateStr, dateStr);
+    const byUid = {};
+    rows.forEach((r) => { byUid[r.uid] = r; });
+
+    const staffList = Object.entries(staffDirectory).filter(([, u]) => u.active !== false && u.locationId);
+    if (!staffList.length) {
+      listEl.innerHTML = emptyState("Chưa có nhân viên nào được gán điểm bán — vào mục Quản lý để thêm");
+      return;
+    }
+
+    const daChamCong = staffList.filter(([uid]) => byUid[uid] && !byUid[uid].offDay).length;
+    if (sumEl) {
+      sumEl.innerHTML = `<p class="hint-text">${daChamCong}/${staffList.length} nhân viên đã chấm công ngày ${formatDateVN(dateStr)}.</p>`;
+    }
+
+    staffList.sort((a, b) => {
+      const rank = (uid) => (!byUid[uid] ? 0 : byUid[uid].offDay ? 1 : 2); // chưa chấm công lên đầu, rồi nghỉ, rồi đã chấm công
+      const rA = rank(a[0]), rB = rank(b[0]);
+      if (rA !== rB) return rA - rB;
+      return (a[1].name || "").localeCompare(b[1].name || "", "vi");
+    });
+
+    listEl.innerHTML = staffList.map(([uid, u]) => {
+      const entry = byUid[uid];
+      let statusHtml, metaHtml = "";
+      if (!entry) {
+        statusHtml = `<span class="badge-unpaid">Chưa chấm công</span>`;
+      } else if (entry.offDay) {
+        statusHtml = `<span class="entry-off-badge">Nghỉ</span>`;
+      } else {
+        statusHtml = `<span class="badge-paid">Đã chấm công</span>`;
+        metaHtml = `<div class="entry-meta">
+          <span>Số lượng: <b>${fmtNum(entry.soLuong)}</b></span>
+          <span>Tổng: <b>${fmt(entry.tong)}</b></span>
+        </div>`;
+      }
+      return `
+        <div class="entry-card">
+          <div class="entry-card-top">
+            <span class="entry-date">${escapeHtml(u.name || "(chưa đặt tên)")} · ${escapeHtml(locationName(u.locationId))}</span>
+            ${statusHtml}
+          </div>
+          ${metaHtml}
+        </div>
+      `;
+    }).join("");
+  } catch (err) {
+    console.error(err);
+    listEl.innerHTML = emptyState("Không tải được dữ liệu điểm danh");
   }
 }
 

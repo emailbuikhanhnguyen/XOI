@@ -105,6 +105,16 @@
     </div>
     <div class="section-block" data-bind="quick-actions"></div>
     <div class="stat-grid" data-bind="home-by-location"></div>
+
+    <div data-bind="attendance-block" hidden>
+      <div class="section-row">
+        <h3 class="section-heading">Điểm danh chấm công</h3>
+        <input type="date" id="attendance-date" class="select-chip" />
+      </div>
+      <div data-bind="attendance-summary"></div>
+      <div class="stack" data-bind="attendance-list"></div>
+    </div>
+
     <h3 class="section-heading">Gần đây</h3>
     <div class="stack" data-bind="recent-list"></div>
   </section>
