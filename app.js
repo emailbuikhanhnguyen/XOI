@@ -422,6 +422,14 @@ async function fetchTransfersByRange(from, to) {
   return rows;
 }
 
+async function fetchOrdersByRange(from, to) {
+  const q = query(collection(db, "orders"), where("date", ">=", from), where("date", "<=", to), orderBy("date", "asc"));
+  const snap = await getDocs(q);
+  const rows = [];
+  snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
+  return rows;
+}
+
 async function fetchThuChiByRange(from, to) {
   const q = query(collection(db, "thuchi"), where("date", ">=", from), where("date", "<=", to), orderBy("date", "asc"));
   const snap = await getDocs(q);
@@ -879,6 +887,39 @@ viewRoot.addEventListener("click", async (e) => {
     } catch (err) { console.error(err); toast("Không xoá được"); }
   }
 
+  const orderFillBtn = e.target.closest("[data-order-fill]");
+  const orderDoneBtn = e.target.closest("[data-order-done]");
+  const orderCancelBtn = e.target.closest("[data-order-cancel]");
+  if (orderFillBtn) {
+    const id = orderFillBtn.dataset.orderFill;
+    const row = ordersCacheGlobal.find((r) => r.id === id);
+    if (!row) return;
+    if ($("#trf-to")) $("#trf-to").value = row.locationId || "";
+    if ($("#trf-item")) $("#trf-item").value = row.itemName || "";
+    if ($("#trf-unit")) $("#trf-unit").value = row.unit || "kg";
+    if ($("#trf-qty")) $("#trf-qty").value = row.qty || "";
+    if ($("#trf-ghichu")) $("#trf-ghichu").value = row.ghiChu ? `Theo yêu cầu: ${row.ghiChu}` : "";
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    toast("Đã điền vào form chuyển hàng — kiểm tra rồi bấm Lưu");
+  }
+  if (orderDoneBtn) {
+    const id = orderDoneBtn.dataset.orderDone;
+    try {
+      await updateDoc(doc(db, "orders", id), { status: "xong", updatedAt: serverTimestamp() });
+      toast("Đã đánh dấu đã chuyển");
+      await loadAndRenderOrderRequests();
+    } catch (err) { console.error(err); toast("Không cập nhật được"); }
+  }
+  if (orderCancelBtn) {
+    const id = orderCancelBtn.dataset.orderCancel;
+    if (!confirm("Huỷ đơn đặt hàng này?")) return;
+    try {
+      await updateDoc(doc(db, "orders", id), { status: "huy", updatedAt: serverTimestamp() });
+      toast("Đã huỷ đơn");
+      await loadAndRenderMyOrders();
+    } catch (err) { console.error(err); toast("Không huỷ được"); }
+  }
+
   const tcEditBtn = e.target.closest("[data-tc-edit]");
   const tcDelBtn = e.target.closest("[data-tc-del]");
   if (tcEditBtn) {
@@ -949,6 +990,7 @@ viewRoot.addEventListener("click", async (e) => {
 /* ===================== KHO & CHUYỂN HÀNG ===================== */
 let ingCacheGlobal = [];
 let transferCacheGlobal = [];
+let ordersCacheGlobal = [];
 
 function itemDatalistHtml() {
   return `<datalist id="item-suggestions">${ITEM_SUGGESTIONS.map((s) => `<option value="${escapeHtml(s)}"></option>`).join("")}</datalist>`;
@@ -967,24 +1009,45 @@ async function renderKho() {
   const manageEl = $('[data-bind="kho-manage"]');
 
   if (!kitchenMode) {
-    // Điểm bán: chỉ xem hàng đã nhận từ bếp, không nhập/xuất được
+    // Điểm bán: xem hàng đã nhận từ bếp (không sửa được) + tự đặt hàng nguyên liệu cần
     manageEl.hidden = true;
     readonlyEl.hidden = false;
     if (!profile.locationId) {
       readonlyEl.innerHTML = emptyState("Bạn chưa được gán điểm bán.");
       return;
     }
-    readonlyEl.innerHTML = `<p class="empty-state">Đang tải…</p>`;
-    try {
-      const from = addDays(todayISO(), -STOCK_WINDOW_DAYS);
-      const all = await fetchTransfersByRange(from, todayISO());
-      const mine = all.filter((r) => r.toLocationId === profile.locationId).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 40);
-      readonlyEl.innerHTML = `<h3 class="section-heading">Đã nhận từ bếp trung tâm</h3>
-        <div class="stack">${renderTransferCards(mine, false)}</div>` .replace('<div class="stack"></div>', emptyState("Chưa nhận hàng nào từ bếp trung tâm"));
-    } catch (err) {
-      console.error(err);
-      readonlyEl.innerHTML = emptyState("Không tải được dữ liệu");
-    }
+
+    $("#order-date").value = todayISO();
+    $("#form-order").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const itemName = $("#order-item").value.trim();
+      const qty = parseFloat($("#order-qty").value) || 0;
+      if (!itemName) { toast("Nhập tên nguyên liệu / mặt hàng cần"); return; }
+      if (qty <= 0) { toast("Nhập số lượng lớn hơn 0"); return; }
+      const payload = {
+        uid: currentUser.uid,
+        locationId: profile.locationId,
+        date: $("#order-date").value,
+        itemName,
+        unit: $("#order-unit").value,
+        qty,
+        ghiChu: $("#order-ghichu").value.trim(),
+        status: "moi",
+        updatedAt: serverTimestamp(),
+      };
+      payload.createdAt = serverTimestamp();
+      await saveOp(
+        () => addDoc(collection(db, "orders"), payload),
+        async (confirmed) => {
+          toast(confirmed ? "Đã gửi yêu cầu tới bếp" : "Đã lưu yêu cầu (chưa có mạng — sẽ tự đồng bộ)");
+          $("#form-order").reset();
+          $("#order-date").value = todayISO();
+          await loadAndRenderMyOrders();
+        }
+      );
+    });
+
+    await Promise.all([loadAndRenderMyOrders(), loadAndRenderReceived()]);
     return;
   }
 
@@ -1080,7 +1143,7 @@ async function renderKho() {
     );
   });
 
-  await loadAndRenderKho(opKitchenId);
+  await Promise.all([loadAndRenderKho(opKitchenId), loadAndRenderOrderRequests()]);
 }
 
 function resetIngForm() {
@@ -1159,6 +1222,87 @@ async function loadAndRenderKho(opKitchenId = operatingKitchenId()) {
     if (ingListEl) ingListEl.innerHTML = emptyState("Không tải được");
     if (trfListEl) trfListEl.innerHTML = emptyState("Không tải được");
     if (stockEl) stockEl.innerHTML = emptyState("Không tải được");
+  }
+}
+
+function renderOrderCards(rows, forKitchen) {
+  if (!rows.length) return "";
+  const statusBadge = (st) => {
+    if (st === "xong") return `<span class="badge-paid">Đã chuyển</span>`;
+    if (st === "huy") return `<span class="entry-off-badge">Đã huỷ</span>`;
+    return `<span class="badge-unpaid">Chờ xử lý</span>`;
+  };
+  return rows.map((r) => `
+    <div class="ing-card" data-id="${r.id}">
+      <div class="entry-card-top">
+        <span class="entry-date">${formatDateVN(r.date)}${forKitchen ? " · " + escapeHtml(locationName(r.locationId)) : ""}</span>
+        ${statusBadge(r.status)}
+      </div>
+      <div class="entry-meta"><span>${escapeHtml(r.itemName)}: <b>${fmtNum(r.qty)} ${escapeHtml(r.unit)}</b></span></div>
+      ${r.ghiChu ? `<div class="entry-note">${escapeHtml(r.ghiChu)}</div>` : ""}
+      ${forKitchen && r.status === "moi" ? `
+      <div class="entry-row-actions">
+        <button class="link-btn" data-order-fill="${r.id}">Điền vào form chuyển hàng</button>
+        <button class="link-btn" data-order-done="${r.id}">Đã chuyển</button>
+      </div>` : ""}
+      ${!forKitchen && r.status === "moi" ? `
+      <div class="entry-row-actions">
+        <button class="link-btn danger" data-order-cancel="${r.id}">Huỷ đơn</button>
+      </div>` : ""}
+    </div>
+  `).join("");
+}
+
+async function loadAndRenderMyOrders() {
+  const el = $('[data-bind="order-list"]');
+  if (el) el.innerHTML = `<p class="empty-state">Đang tải…</p>`;
+  try {
+    const from = addDays(todayISO(), -STOCK_WINDOW_DAYS);
+    const to = addDays(todayISO(), 30);
+    const all = await fetchOrdersByRange(from, to);
+    ordersCacheGlobal = all
+      .filter((r) => r.locationId === profile.locationId)
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+    if (el) el.innerHTML = renderOrderCards(ordersCacheGlobal.slice(0, 40), false) || emptyState("Bạn chưa đặt hàng nguyên liệu nào");
+  } catch (err) {
+    console.error(err);
+    if (el) el.innerHTML = emptyState("Không tải được");
+  }
+}
+
+async function loadAndRenderReceived() {
+  const el = $('[data-bind="received-list"]');
+  if (el) el.innerHTML = `<p class="empty-state">Đang tải…</p>`;
+  try {
+    const from = addDays(todayISO(), -STOCK_WINDOW_DAYS);
+    const to = todayISO();
+    const allTrf = await fetchTransfersByRange(from, to);
+    const mine = allTrf
+      .filter((r) => r.toLocationId === profile.locationId)
+      .sort((a, b) => (a.date < b.date ? 1 : -1))
+      .slice(0, 40);
+    if (el) el.innerHTML = renderTransferCards(mine, false) || emptyState("Chưa nhận hàng nào từ bếp trung tâm");
+  } catch (err) {
+    console.error(err);
+    if (el) el.innerHTML = emptyState("Không tải được");
+  }
+}
+
+async function loadAndRenderOrderRequests() {
+  const el = $('[data-bind="order-requests-list"]');
+  if (!el) return;
+  el.innerHTML = `<p class="empty-state">Đang tải…</p>`;
+  try {
+    const from = addDays(todayISO(), -STOCK_WINDOW_DAYS);
+    const to = addDays(todayISO(), 30);
+    const all = await fetchOrdersByRange(from, to);
+    ordersCacheGlobal = all
+      .filter((r) => r.status !== "huy" && r.status !== "xong")
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+    el.innerHTML = renderOrderCards(ordersCacheGlobal, true) || emptyState("Chưa có yêu cầu nguyên liệu nào từ điểm bán");
+  } catch (err) {
+    console.error(err);
+    el.innerHTML = emptyState("Không tải được");
   }
 }
 

@@ -5,10 +5,11 @@ công/lương theo từng điểm, nguyên liệu & tồn kho ở bếp, chuyể
 bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ thống.
 
 > **Đang nâng cấp từ bản cũ?** Bản này có thêm collection Firestore mới
-> (`itemCatalog`) và cập nhật `firestore.rules`. Sau khi đưa code mới lên,
-> nhớ vào **Firebase Console → Firestore Database → Rules**, dán lại toàn bộ
-> nội dung file `firestore.rules` mới rồi bấm **Publish** — nếu quên bước
-> này, mục "Định mức nguyên liệu" ở Quản lý sẽ báo lỗi khi lưu.
+> (`itemCatalog`, `orders`) và cập nhật `firestore.rules`. Sau khi đưa code
+> mới lên, nhớ vào **Firebase Console → Firestore Database → Rules**, dán lại
+> toàn bộ nội dung file `firestore.rules` mới rồi bấm **Publish** — nếu quên
+> bước này, mục "Định mức nguyên liệu" ở Quản lý và mục "Đặt hàng nguyên
+> liệu" ở điểm bán sẽ báo lỗi khi lưu.
 
 ## Mô hình dữ liệu
 
@@ -21,6 +22,11 @@ bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ
   nguyên liệu tự do, đơn vị, số lượng, thành tiền).
 - **Chuyển hàng** (`transfers`): bếp trung tâm ghi nhận xuất hàng cho từng
   điểm bán theo ngày. Điểm bán chỉ xem được (không sửa) danh sách đã nhận.
+- **Đặt hàng nguyên liệu** (`orders`): điểm bán chủ động gửi yêu cầu nguyên
+  liệu cần (tên, số lượng, ngày cần, ghi chú) cho bếp trung tâm. Bếp/chủ quán
+  thấy danh sách yêu cầu đang chờ, có thể bấm "Điền vào form chuyển hàng" để
+  tạo phiếu chuyển hàng tương ứng rồi đánh dấu "Đã chuyển", hoặc điểm bán tự
+  huỷ đơn nếu đặt nhầm.
 - **Tồn kho bếp** = tổng đã nhập − tổng đã chuyển đi (tính trong 365 ngày gần
   nhất), tính theo từng loại nguyên liệu.
 - **Thu & chi** (`thuchi`): sổ ghi các khoản thu/chi ngoài lương và nguyên
@@ -42,7 +48,8 @@ bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ
 - **Nhân viên tại bếp trung tâm**: chấm công như bình thường, cộng thêm quyền
   nhập nguyên liệu, ghi nhận chuyển hàng cho các điểm bán, xem tồn kho.
 - **Nhân viên tại điểm bán**: chấm công (lương, số lượng bán, thưởng, ship,
-  xôi ế/dẹp — giống bảng cũ), xem (không sửa) danh sách hàng đã nhận từ bếp.
+  xôi ế/dẹp — giống bảng cũ), xem (không sửa) danh sách hàng đã nhận từ bếp,
+  và tự gửi yêu cầu đặt hàng nguyên liệu cần cho bếp trung tâm.
 
 ## Cấu trúc file
 

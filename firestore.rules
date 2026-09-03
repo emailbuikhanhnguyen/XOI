@@ -79,5 +79,16 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
+
+    // Yêu cầu/đặt hàng nguyên liệu từ điểm bán gửi bếp trung tâm. Điểm bán
+    // tạo đơn của mình; ai đã đăng nhập cũng cập nhật được trạng thái (để
+    // nhân viên bếp đánh dấu đã xử lý mà không cần là chủ tài khoản); chỉ
+    // chủ quán hoặc người tạo mới xoá được.
+    match /orders/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn();
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+    }
   }
 }

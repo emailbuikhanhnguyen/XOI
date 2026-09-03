@@ -192,10 +192,55 @@
 
 <template id="tpl-kho">
   <section class="view">
-    <div data-bind="kho-readonly" hidden></div>
+    <div data-bind="kho-readonly" hidden>
+      <form id="form-order" class="ticket ticket-form">
+        <p class="eyebrow">Đặt hàng nguyên liệu từ bếp</p>
+        <div class="grid-2">
+          <label class="field">
+            <span>Ngày cần</span>
+            <input type="date" id="order-date" required />
+          </label>
+          <label class="field">
+            <span>Đơn vị</span>
+            <select id="order-unit">
+              <option value="kg">kg</option>
+              <option value="gr">gr</option>
+              <option value="lít">lít</option>
+              <option value="cái">cái</option>
+              <option value="gói">gói</option>
+              <option value="phần">phần</option>
+            </select>
+          </label>
+        </div>
+        <label class="field">
+          <span>Nguyên liệu / mặt hàng cần</span>
+          <input type="text" id="order-item" list="item-suggestions" placeholder="VD: Gạo nếp" required />
+        </label>
+        <label class="field">
+          <span>Số lượng</span>
+          <input type="number" inputmode="decimal" id="order-qty" min="0" step="0.1" required />
+        </label>
+        <label class="field">
+          <span>Ghi chú</span>
+          <input type="text" id="order-ghichu" placeholder="VD: cần gấp trước 10h sáng" />
+        </label>
+        <div class="ticket-actions">
+          <button type="submit" class="btn btn-primary">Gửi yêu cầu</button>
+        </div>
+      </form>
+
+      <h3 class="section-heading">Đơn đã đặt</h3>
+      <div class="stack" data-bind="order-list"></div>
+
+      <h3 class="section-heading">Đã nhận từ bếp trung tâm</h3>
+      <div class="stack" data-bind="received-list"></div>
+    </div>
 
     <div data-bind="kho-manage" hidden>
       <div class="ticket" style="margin-bottom:12px;" data-bind="kitchen-select"></div>
+
+      <h3 class="section-heading">Yêu cầu nguyên liệu từ điểm bán</h3>
+      <div class="stack" data-bind="order-requests-list"></div>
 
       <form id="form-ing" class="ticket ticket-form">
         <p class="eyebrow">Nhập nguyên liệu vào bếp</p>
