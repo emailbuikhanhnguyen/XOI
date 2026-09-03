@@ -73,5 +73,11 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
+
+    // Định mức nguyên liệu/phần (BOM) + ngưỡng cảnh báo tồn kho — chỉ chủ quán chỉnh
+    match /itemCatalog/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
   }
 }

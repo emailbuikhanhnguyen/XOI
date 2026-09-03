@@ -4,21 +4,67 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
-  createUserWithEmailAndPassword,
+  createUserWithEmailAndPassword, sendPasswordResetEmail,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc, setDoc, addDoc, getDoc, getDocs,
+  getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  collection, doc, setDoc, addDoc, getDoc, getDocs,
   query, where, orderBy, limit, updateDoc, deleteDoc, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);
+
+// Bật lưu offline: chấm công / nhập kho / chuyển hàng vẫn lưu được khi mất
+// mạng (ghi vào IndexedDB của trình duyệt), tự đồng bộ lên Firestore ngay
+// khi có mạng lại — không cần chờ mạng mới thao tác được ở quầy.
+let db;
+try {
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  });
+} catch (err) {
+  // Trình duyệt/chế độ không hỗ trợ persistence (vd. một số trình duyệt ẩn
+  // danh) → rơi về Firestore bình thường (chỉ hoạt động khi có mạng).
+  console.error("Không bật được lưu offline, dùng chế độ online-only:", err);
+  db = getFirestore(app);
+}
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./sw.js").catch(() => {});
   });
+}
+
+/* ===================== MẠNG (online/offline) ===================== */
+function updateNetworkBanner() {
+  const el = document.getElementById("network-banner");
+  if (!el) return;
+  el.hidden = navigator.onLine;
+}
+window.addEventListener("online", () => { updateNetworkBanner(); toast("Đã có mạng lại — dữ liệu đang tự đồng bộ."); });
+window.addEventListener("offline", () => { updateNetworkBanner(); toast("Mất mạng — vẫn thao tác bình thường, dữ liệu sẽ tự đồng bộ khi có mạng lại."); });
+
+// Lưu 1 thao tác ghi Firestore kiểu "optimistic": khi đang mất mạng, promise
+// của addDoc/updateDoc/setDoc sẽ treo tới lúc có mạng lại (đặc tính của
+// Firestore offline persistence) — nên ở đây không chờ mà coi như đã lưu cục
+// bộ ngay (dữ liệu đã nằm trong cache offline và sẽ tự đồng bộ), đồng thời
+// vẫn bắt lỗi ngầm nếu cuối cùng ghi thất bại. Khi đang có mạng thì chờ bình
+// thường như cũ để bắt lỗi (vd. sai quyền) ngay lúc đó.
+async function saveOp(writePromiseFactory, onDone) {
+  const p = writePromiseFactory();
+  if (!navigator.onLine) {
+    p.catch((err) => { console.error(err); toast("Đồng bộ thất bại: " + (err.message || "")); });
+    if (onDone) await onDone(false);
+    return;
+  }
+  try {
+    await p;
+    if (onDone) await onDone(true);
+  } catch (err) {
+    console.error(err);
+    toast("Lỗi khi lưu: " + (err.message || "Thử lại nhé."));
+  }
 }
 
 /* ===================== STATE ===================== */
@@ -32,6 +78,10 @@ let editingIngId = null;
 let editingTransferId = null;
 let editingLocationId = null;
 let editingThuChiId = null;
+let ingReceiptCtl = null; // control ảnh hoá đơn của form nhập nguyên liệu (gắn trong renderKho)
+let tcReceiptCtl = null; // control ảnh hoá đơn của form thu chi (gắn trong renderThuChi)
+let itemCatalog = {}; // itemName -> { unit, qtyPerPortion, threshold } — định mức & ngưỡng cảnh báo (settings/itemCatalog)
+let entryListLimit = 30, ingListLimit = 30, trfListLimit = 30, tcListLimit = 30; // "Xem thêm" — tăng dần khi bấm
 
 const STOCK_WINDOW_DAYS = 365; // khoảng thời gian dùng để tính tồn kho / lịch sử gần đây
 const ITEM_SUGGESTIONS = ["Gà", "Nấm", "Gạo nếp", "Đậu xanh", "Dầu ăn", "Hành phi", "Gia vị", "Nước tương", "Túi/hộp gói"];
@@ -98,6 +148,83 @@ function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+/* ===================== ẢNH HOÁ ĐƠN ===================== */
+// Không dùng Firebase Storage (từ 09/2024 Storage mặc định yêu cầu gói Blaze
+// trả phí) — thay vào đó nén ảnh nhỏ lại rồi lưu thẳng dạng base64 trong
+// document Firestore (đủ nhỏ để không vượt giới hạn 1MB/document).
+function compressImageToDataUrl(file, maxDim = 900, quality = 0.6) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Không đọc được ảnh"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Không đọc được ảnh"));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const ratio = Math.min(maxDim / width, maxDim / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// Gắn 1 input[type=file] ảnh hoá đơn vào 1 form: nén ảnh khi chọn, hiện
+// preview nhỏ, cho xoá. Trả về { get, set } để form đọc/đặt giá trị hiện tại.
+function wireReceiptInput(inputId, rowId, imgId, clearBtnId) {
+  const inputEl = $("#" + inputId);
+  const rowEl = $("#" + rowId);
+  const imgEl = $("#" + imgId);
+  const clearBtn = $("#" + clearBtnId);
+  if (!inputEl) return { get: () => "", set: () => {} };
+  let current = "";
+  function render() {
+    if (current) { imgEl.src = current; rowEl.hidden = false; } else { rowEl.hidden = true; imgEl.src = ""; }
+  }
+  inputEl.addEventListener("change", async () => {
+    const file = inputEl.files && inputEl.files[0];
+    inputEl.value = "";
+    if (!file) return;
+    try {
+      current = await compressImageToDataUrl(file);
+      render();
+    } catch (err) {
+      console.error(err);
+      toast("Không đọc được ảnh, thử ảnh khác nhé");
+    }
+  });
+  clearBtn?.addEventListener("click", () => { current = ""; render(); });
+  return { get: () => current, set: (url) => { current = url || ""; render(); } };
+}
+
+function receiptThumbHtml(url) {
+  return url ? `<img class="receipt-thumb" src="${url}" data-lightbox="1" alt="Ảnh hoá đơn" />` : "";
+}
+
+function openLightbox(src) {
+  const el = document.createElement("div");
+  el.className = "receipt-lightbox";
+  el.innerHTML = `<img src="${src}" alt="Ảnh hoá đơn" />`;
+  el.addEventListener("click", () => el.remove());
+  document.body.appendChild(el);
+}
+
+// true nếu 1 trong các field của row (đọc từ fields, vd ["itemName","ghiChu"])
+// chứa chuỗi tìm kiếm (không phân biệt hoa/thường, không dấu-sensitive).
+function matchesSearch(row, term, fields) {
+  if (!term) return true;
+  const t = term.toLowerCase();
+  return fields.some((f) => (row[f] || "").toString().toLowerCase().includes(t));
+}
+
 function emptyState(msg) {
   return `<div class="empty-state">
     <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 3h14l-1 6a6 6 0 0 1-12 0L5 3Z"/><path d="M9 21h6M12 15v6"/></svg>
@@ -122,6 +249,18 @@ $("#form-login").addEventListener("submit", async (e) => {
 
 $("#btn-logout").addEventListener("click", () => signOut(auth));
 
+$("#btn-forgot-password").addEventListener("click", async () => {
+  const email = ($("#login-email").value || "").trim();
+  if (!email) { toast("Nhập email của bạn ở ô Email trước, rồi bấm Quên mật khẩu lần nữa"); return; }
+  try {
+    await sendPasswordResetEmail(auth, email);
+    toast("Đã gửi email đặt lại mật khẩu tới " + email + " (kiểm tra cả mục thư rác)");
+  } catch (err) {
+    console.error(err);
+    toast("Không gửi được email. Kiểm tra lại email đã nhập.");
+  }
+});
+
 onAuthStateChanged(auth, async (user) => {
   if (user) {
     currentUser = user;
@@ -133,7 +272,7 @@ onAuthStateChanged(auth, async (user) => {
         return;
       }
       profile = snap.data();
-      await Promise.all([loadStaffDirectory(), loadLocationsDirectory(), loadSettings()]);
+      await Promise.all([loadStaffDirectory(), loadLocationsDirectory(), loadSettings(), loadItemCatalog()]);
       showApp();
     } catch (err) {
       console.error(err);
@@ -156,6 +295,7 @@ function showLogin() {
 function showApp() {
   $("#screen-login").hidden = true;
   $("#app").hidden = false;
+  updateNetworkBanner();
   window.scrollTo(0, 0);
   const roleLabel = isAdmin() ? "Chủ quán" : "Nhân viên";
   const locLabel = profile.locationId ? " · " + locationName(profile.locationId) : "";
@@ -189,6 +329,64 @@ async function loadSettings() {
     const snap = await getDoc(doc(db, "settings", "general"));
     if (snap.exists()) settings = { ...settings, ...snap.data() };
   } catch (err) { console.error(err); }
+}
+
+// Định mức nguyên liệu/phần (BOM) + ngưỡng cảnh báo tồn kho, mỗi nguyên liệu
+// 1 document trong collection itemCatalog (id = tên đã slug hoá).
+// Chỉ giữ ký tự a-z0-9 làm phần dễ đọc, ghép thêm 1 mã hash ngắn để đảm bảo
+// không trùng id giữa các nguyên liệu tiếng Việt khác nhau (vd "Gà" vs "Gạo").
+function slugifyItemName(name) {
+  const trimmed = (name || "").trim();
+  let hash = 0;
+  for (let i = 0; i < trimmed.length; i++) hash = (hash * 31 + trimmed.charCodeAt(i)) >>> 0;
+  const asciiPart = trimmed.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  return (asciiPart || "item") + "-" + hash.toString(36);
+}
+
+async function loadItemCatalog() {
+  try {
+    const snap = await getDocs(collection(db, "itemCatalog"));
+    itemCatalog = {};
+    snap.forEach((d) => {
+      const data = d.data();
+      if (data.itemName) itemCatalog[data.itemName] = { id: d.id, ...data };
+    });
+  } catch (err) { console.error(err); }
+}
+
+// Giá trung bình/đơn vị của 1 nguyên liệu, tính từ lịch sử nhập hàng gần đây
+// (tổng thành tiền / tổng số lượng đã nhập trong cửa sổ ngày truyền vào).
+function avgUnitCostMap(ingRows) {
+  const map = {};
+  ingRows.forEach((r) => {
+    if (!r.itemName) return;
+    map[r.itemName] = map[r.itemName] || { unit: r.unit, totalQty: 0, totalTien: 0 };
+    map[r.itemName].totalQty += r.qty || 0;
+    map[r.itemName].totalTien += r.tien || 0;
+    if (r.unit) map[r.itemName].unit = r.unit;
+  });
+  Object.values(map).forEach((v) => { v.avgCost = v.totalQty ? v.totalTien / v.totalQty : 0; });
+  return map;
+}
+
+// Giá vốn nguyên liệu ước tính / 1 phần xôi bán ra = tổng (định mức × giá TB/đơn vị)
+// trên các nguyên liệu đã được đặt định mức ở mục Quản lý.
+async function computeGiaVonPerPhan() {
+  try {
+    const from = addDays(todayISO(), -STOCK_WINDOW_DAYS);
+    const rows = await fetchIngredientsByRange(from, todayISO());
+    const costMap = avgUnitCostMap(rows);
+    let total = 0;
+    Object.entries(itemCatalog).forEach(([name, cat]) => {
+      if (!cat.qtyPerPortion) return;
+      const c = costMap[name];
+      total += (cat.qtyPerPortion || 0) * (c ? c.avgCost : 0);
+    });
+    return total;
+  } catch (err) {
+    console.error(err);
+    return 0;
+  }
 }
 
 async function fetchEntriesByUid(uid) {
@@ -333,6 +531,7 @@ async function renderTrangChu() {
         }).join("") : emptyState("Chưa có điểm bán nào — vào mục Quản lý để thêm");
       }
       await renderAttendanceStatus(todayISO());
+      await renderHomeReminders();
     } else {
       const rows = await fetchEntriesByUid(currentUser.uid);
       const todayRow = rows.find((r) => r.date === todayISO());
@@ -350,6 +549,49 @@ async function renderTrangChu() {
     console.error(err);
     statsEl.innerHTML = `<div class="hero-stat"><span class="num">—</span><span class="label">Lỗi tải dữ liệu</span></div>`;
   }
+}
+
+// Nhắc nhở trong app khi mở Trang chủ (chủ quán): nhân viên chưa chấm công
+// (chỉ nhắc từ cuối giờ chiều để khỏi làm phiền cả ngày) + nguyên liệu sắp
+// hết ở bếp. Đây KHÔNG phải push notification thật (app vẫn phải đang mở) —
+// vì app này chạy tĩnh trên GitHub Pages, không có server để đẩy thông báo
+// khi điện thoại tắt màn hình/đóng app; muốn có push thật cần thêm Cloud
+// Functions + Firebase Cloud Messaging và nâng cấp gói Firebase lên Blaze.
+async function renderHomeReminders() {
+  const el = $('[data-bind="home-reminders"]');
+  if (!el) return;
+  const banners = [];
+  try {
+    const today = todayISO();
+    if (new Date().getHours() >= 17) {
+      const rows = await fetchEntriesByRange(today, today);
+      const byUid = {};
+      rows.forEach((r) => { byUid[r.uid] = r; });
+      const missing = Object.entries(staffDirectory).filter(([uid, u]) => u.active !== false && u.locationId && !byUid[uid]);
+      if (missing.length) {
+        banners.push(`<div class="reminder-banner">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
+          <span>${missing.length} nhân viên chưa chấm công hôm nay: ${missing.map(([, u]) => escapeHtml(u.name || "?")).join(", ")}.</span>
+        </div>`);
+      }
+    }
+    const from = addDays(today, -STOCK_WINDOW_DAYS);
+    const [allIng, allTrf] = await Promise.all([fetchIngredientsByRange(from, today), fetchTransfersByRange(from, today)]);
+    const stock = {};
+    allIng.forEach((r) => { stock[r.itemName] = (stock[r.itemName] || 0) + (r.qty || 0); });
+    allTrf.forEach((r) => { stock[r.itemName] = (stock[r.itemName] || 0) - (r.qty || 0); });
+    const lowItems = Object.entries(stock).filter(([name, ton]) => {
+      const th = itemCatalog[name]?.threshold;
+      return th && ton < th;
+    });
+    if (lowItems.length) {
+      banners.push(`<div class="reminder-banner gold">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+          <span>Sắp hết ${lowItems.length} nguyên liệu ở bếp: ${lowItems.map(([name]) => escapeHtml(name)).join(", ")}.</span>
+      </div>`);
+    }
+  } catch (err) { console.error(err); }
+  el.innerHTML = banners.join("");
 }
 
 // Điểm danh chấm công theo ngày (chỉ chủ quán): xem nhanh nhân viên nào
@@ -419,6 +661,7 @@ let entryCacheForUser = [];
 async function renderChamCong() {
   mount("cham-cong");
   editingEntryId = null;
+  entryListLimit = 30;
 
   if (!isAdmin() && !profile.locationId) {
     viewRoot.innerHTML = emptyState("Bạn chưa được gán điểm bán nên chưa thể chấm công. Liên hệ chủ quán.");
@@ -470,24 +713,21 @@ async function renderChamCong() {
       ghiChu: $("#entry-ghichu").value.trim(),
       updatedAt: serverTimestamp(),
     };
-    try {
-      if (editingEntryId) {
-        await updateDoc(doc(db, "entries", editingEntryId), payload);
-        toast("Đã cập nhật phiếu chấm công");
-      } else {
-        payload.createdAt = serverTimestamp();
-        await addDoc(collection(db, "entries"), payload);
-        toast("Đã lưu phiếu chấm công");
+    const wasEditing = !!editingEntryId;
+    if (!wasEditing) payload.createdAt = serverTimestamp();
+    await saveOp(
+      () => (wasEditing ? updateDoc(doc(db, "entries", editingEntryId), payload) : addDoc(collection(db, "entries"), payload)),
+      async (confirmed) => {
+        toast(wasEditing ? "Đã cập nhật phiếu chấm công" : (confirmed ? "Đã lưu phiếu chấm công" : "Đã lưu phiếu (chưa có mạng — sẽ tự đồng bộ)"));
+        resetEntryForm();
+        await loadAndRenderEntryList();
       }
-      resetEntryForm();
-      await loadAndRenderEntryList();
-    } catch (err) {
-      console.error(err);
-      toast("Lỗi khi lưu phiếu: " + (err.message || "Thử lại nhé."));
-    }
+    );
   });
 
-  $("#entry-filter").addEventListener("change", renderEntryListFiltered);
+  $("#entry-filter").addEventListener("change", () => { entryListLimit = 30; renderEntryListFiltered(); });
+  $("#entry-search").addEventListener("input", () => { entryListLimit = 30; renderEntryListFiltered(); });
+  $('[data-bind="entry-list-more"]').addEventListener("click", () => { entryListLimit += 30; renderEntryListFiltered(); });
 
   await loadAndRenderEntryList();
 }
@@ -518,8 +758,11 @@ async function loadAndRenderEntryList() {
 function renderEntryListFiltered() {
   const days = parseInt($("#entry-filter").value, 10);
   const cutoff = addDays(todayISO(), -days);
-  const rows = entryCacheForUser.filter((r) => r.date >= cutoff);
-  $('[data-bind="entry-list"]').innerHTML = renderEntryCards(rows, false, true) || emptyState("Không có dữ liệu trong khoảng này");
+  const term = $("#entry-search")?.value.trim() || "";
+  const rows = entryCacheForUser.filter((r) => r.date >= cutoff && matchesSearch(r, term, ["ghiChu", "name"]));
+  $('[data-bind="entry-list"]').innerHTML = renderEntryCards(rows.slice(0, entryListLimit), false, true) || emptyState(term ? "Không tìm thấy phiếu nào khớp" : "Không có dữ liệu trong khoảng này");
+  const moreEl = $('[data-bind="entry-list-more"]');
+  if (moreEl) moreEl.hidden = rows.length <= entryListLimit;
 }
 
 function renderEntryCards(rows, showName, showActions = false, showLocation = false) {
@@ -550,6 +793,9 @@ function renderEntryCards(rows, showName, showActions = false, showLocation = fa
 
 // Event delegation cho các nút sửa/xoá trong view-root (view-root tồn tại xuyên suốt các lần render)
 viewRoot.addEventListener("click", async (e) => {
+  const thumbEl = e.target.closest(".receipt-thumb");
+  if (thumbEl) { openLightbox(thumbEl.src); return; }
+
   const editBtn = e.target.closest("[data-edit]");
   const delBtn = e.target.closest("[data-del]");
   if (editBtn && $("#form-entry")) {
@@ -593,6 +839,7 @@ viewRoot.addEventListener("click", async (e) => {
     $("#ing-qty").value = row.qty || "";
     $("#ing-tien").value = row.tien || "";
     $("#ing-ghichu").value = row.ghiChu || "";
+    ingReceiptCtl?.set(row.anhHoaDon || "");
     $("#btn-ing-cancel").hidden = false;
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -645,6 +892,7 @@ viewRoot.addEventListener("click", async (e) => {
     $("#tc-sotien").value = row.soTien || 0;
     $("#tc-location").value = row.locationId || "";
     $("#tc-ghichu").value = row.ghiChu || "";
+    tcReceiptCtl?.set(row.anhHoaDon || "");
     $("#btn-tc-cancel").hidden = false;
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -710,6 +958,8 @@ async function renderKho() {
   mount("kho");
   editingIngId = null;
   editingTransferId = null;
+  ingListLimit = 30;
+  trfListLimit = 30;
   viewRoot.insertAdjacentHTML("beforeend", itemDatalistHtml());
 
   const kitchenMode = isKitchenContext();
@@ -761,6 +1011,7 @@ async function renderKho() {
 
   $("#ing-date").value = todayISO();
   $("#trf-date").value = todayISO();
+  ingReceiptCtl = wireReceiptInput("ing-anh", "ing-anh-row", "ing-anh-preview", "ing-anh-clear");
   const trfToSel = $("#trf-to");
   const pLocs = pointLocations();
   trfToSel.innerHTML = pLocs.length
@@ -769,6 +1020,10 @@ async function renderKho() {
 
   $("#btn-ing-cancel").addEventListener("click", () => resetIngForm());
   $("#btn-trf-cancel").addEventListener("click", () => resetTrfForm());
+  $("#ing-search").addEventListener("input", () => { ingListLimit = 30; renderIngListUI(); });
+  $("#trf-search").addEventListener("input", () => { trfListLimit = 30; renderTrfListUI(); });
+  $('[data-bind="ing-list-more"]').addEventListener("click", () => { ingListLimit += 30; renderIngListUI(); });
+  $('[data-bind="trf-list-more"]').addEventListener("click", () => { trfListLimit += 30; renderTrfListUI(); });
 
   $("#form-ing").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -784,18 +1039,17 @@ async function renderKho() {
       updatedAt: serverTimestamp(),
     };
     if (!payload.itemName) { toast("Nhập tên nguyên liệu"); return; }
-    try {
-      if (editingIngId) {
-        await updateDoc(doc(db, "ingredients", editingIngId), payload);
-        toast("Đã cập nhật");
-      } else {
-        payload.createdAt = serverTimestamp();
-        await addDoc(collection(db, "ingredients"), payload);
-        toast("Đã lưu nguyên liệu");
+    payload.anhHoaDon = ingReceiptCtl ? ingReceiptCtl.get() : "";
+    const wasEditing = !!editingIngId;
+    if (!wasEditing) payload.createdAt = serverTimestamp();
+    await saveOp(
+      () => (wasEditing ? updateDoc(doc(db, "ingredients", editingIngId), payload) : addDoc(collection(db, "ingredients"), payload)),
+      async (confirmed) => {
+        toast(wasEditing ? "Đã cập nhật" : (confirmed ? "Đã lưu nguyên liệu" : "Đã lưu (chưa có mạng — sẽ tự đồng bộ)"));
+        resetIngForm();
+        await loadAndRenderKho(opKitchenId);
       }
-      resetIngForm();
-      await loadAndRenderKho(opKitchenId);
-    } catch (err) { console.error(err); toast("Lỗi khi lưu"); }
+    );
   });
 
   $("#form-trf").addEventListener("submit", async (e) => {
@@ -814,18 +1068,16 @@ async function renderKho() {
       updatedAt: serverTimestamp(),
     };
     if (!payload.itemName) { toast("Nhập tên hàng chuyển"); return; }
-    try {
-      if (editingTransferId) {
-        await updateDoc(doc(db, "transfers", editingTransferId), payload);
-        toast("Đã cập nhật");
-      } else {
-        payload.createdAt = serverTimestamp();
-        await addDoc(collection(db, "transfers"), payload);
-        toast("Đã ghi nhận chuyển hàng");
+    const wasEditing = !!editingTransferId;
+    if (!wasEditing) payload.createdAt = serverTimestamp();
+    await saveOp(
+      () => (wasEditing ? updateDoc(doc(db, "transfers", editingTransferId), payload) : addDoc(collection(db, "transfers"), payload)),
+      async (confirmed) => {
+        toast(wasEditing ? "Đã cập nhật" : (confirmed ? "Đã ghi nhận chuyển hàng" : "Đã ghi nhận (chưa có mạng — sẽ tự đồng bộ)"));
+        resetTrfForm();
+        await loadAndRenderKho(opKitchenId);
       }
-      resetTrfForm();
-      await loadAndRenderKho(opKitchenId);
-    } catch (err) { console.error(err); toast("Lỗi khi lưu"); }
+    );
   });
 
   await loadAndRenderKho(opKitchenId);
@@ -838,6 +1090,7 @@ function resetIngForm() {
   f.reset();
   $("#ing-date").value = todayISO();
   $("#btn-ing-cancel").hidden = true;
+  ingReceiptCtl?.set("");
 }
 
 function resetTrfForm() {
@@ -863,8 +1116,8 @@ async function loadAndRenderKho(opKitchenId = operatingKitchenId()) {
     ingCacheGlobal = allIng.filter((r) => r.locationId === opKitchenId).sort((a, b) => (a.date < b.date ? 1 : -1));
     transferCacheGlobal = allTrf.filter((r) => r.fromLocationId === opKitchenId).sort((a, b) => (a.date < b.date ? 1 : -1));
 
-    if (ingListEl) ingListEl.innerHTML = renderIngCards(ingCacheGlobal.slice(0, 30)) || emptyState(`Chưa có nguyên liệu nhập trong ${STOCK_WINDOW_DAYS} ngày qua`);
-    if (trfListEl) trfListEl.innerHTML = renderTransferCards(transferCacheGlobal.slice(0, 30), true) || emptyState("Chưa chuyển hàng cho điểm bán nào");
+    renderIngListUI();
+    renderTrfListUI();
 
     if (stockEl) {
       const stock = {};
@@ -879,10 +1132,24 @@ async function loadAndRenderKho(opKitchenId = operatingKitchenId()) {
         stock[k].ton -= r.qty || 0;
       });
       const rows = Object.values(stock).sort((a, b) => a.itemName.localeCompare(b.itemName));
+      const lowRows = rows.filter((r) => {
+        const th = itemCatalog[r.itemName]?.threshold;
+        return th && r.ton < th;
+      });
+      const lowBannerHtml = lowRows.length ? `
+        <div class="reminder-banner">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+          <span>Sắp hết ${lowRows.length} nguyên liệu: ${lowRows.map((r) => escapeHtml(r.itemName)).join(", ")}. Đặt/điều chỉnh ngưỡng cảnh báo ở mục Quản lý.</span>
+        </div>` : "";
       stockEl.innerHTML = rows.length ? `
+        ${lowBannerHtml}
         <table class="data-table">
           <thead><tr><th>Nguyên liệu</th><th>Đơn vị</th><th>Tồn hiện tại</th></tr></thead>
-          <tbody>${rows.map((r) => `<tr><td>${escapeHtml(r.itemName)}</td><td>${escapeHtml(r.unit)}</td><td><b>${fmtNum(r.ton)}</b></td></tr>`).join("")}</tbody>
+          <tbody>${rows.map((r) => {
+            const th = itemCatalog[r.itemName]?.threshold;
+            const isLow = th && r.ton < th;
+            return `<tr class="${isLow ? "stock-row-low" : ""}"><td>${escapeHtml(r.itemName)}</td><td>${escapeHtml(r.unit)}</td><td><b>${fmtNum(r.ton)}</b>${isLow ? ` <span class="badge-warn">Sắp hết</span>` : ""}</td></tr>`;
+          }).join("")}</tbody>
         </table>
         <p class="hint-text">Tồn kho tính trong ${STOCK_WINDOW_DAYS} ngày gần nhất (nhập − đã chuyển đi).</p>
       ` : emptyState("Chưa có dữ liệu tồn kho");
@@ -907,6 +1174,7 @@ function renderIngCards(rows) {
         <span>${escapeHtml(r.itemName)}: <b>${fmtNum(r.qty)} ${escapeHtml(r.unit)}</b></span>
       </div>
       ${r.ghiChu ? `<div class="entry-note">${escapeHtml(r.ghiChu)}</div>` : ""}
+      ${receiptThumbHtml(r.anhHoaDon)}
       <div class="entry-row-actions">
         <button class="link-btn" data-ing-edit="${r.id}">Sửa</button>
         <button class="link-btn danger" data-ing-del="${r.id}">Xoá</button>
@@ -934,6 +1202,28 @@ function renderTransferCards(rows, showActions) {
   `).join("");
 }
 
+function renderIngListUI() {
+  const el = $('[data-bind="ing-list"]');
+  const moreEl = $('[data-bind="ing-list-more"]');
+  if (!el) return;
+  const term = $("#ing-search")?.value.trim() || "";
+  const filtered = ingCacheGlobal.filter((r) => matchesSearch(r, term, ["itemName", "ghiChu"]));
+  el.innerHTML = renderIngCards(filtered.slice(0, ingListLimit)) || emptyState(term ? "Không tìm thấy nguyên liệu nào khớp" : `Chưa có nguyên liệu nhập trong ${STOCK_WINDOW_DAYS} ngày qua`);
+  if (moreEl) moreEl.hidden = filtered.length <= ingListLimit;
+}
+
+function renderTrfListUI() {
+  const el = $('[data-bind="trf-list"]');
+  const moreEl = $('[data-bind="trf-list-more"]');
+  if (!el) return;
+  const term = $("#trf-search")?.value.trim() || "";
+  const filtered = term
+    ? transferCacheGlobal.filter((r) => matchesSearch(r, term, ["itemName", "ghiChu"]) || locationName(r.toLocationId).toLowerCase().includes(term.toLowerCase()))
+    : transferCacheGlobal;
+  el.innerHTML = renderTransferCards(filtered.slice(0, trfListLimit), true) || emptyState(term ? "Không tìm thấy lần chuyển hàng nào khớp" : "Chưa chuyển hàng cho điểm bán nào");
+  if (moreEl) moreEl.hidden = filtered.length <= trfListLimit;
+}
+
 /* ===================== THU & CHI ===================== */
 let thuChiCacheGlobal = [];
 
@@ -946,10 +1236,12 @@ function tcLocationLabel(id) { return id ? locationName(id) : "Chung (toàn quá
 async function renderThuChi() {
   mount("thu-chi");
   editingThuChiId = null;
+  tcListLimit = 30;
   viewRoot.insertAdjacentHTML("beforeend", thuChiDatalistHtml());
 
   $("#tc-date").value = todayISO();
   $("#tc-loai").value = "chi";
+  tcReceiptCtl = wireReceiptInput("tc-anh", "tc-anh-row", "tc-anh-preview", "tc-anh-clear");
 
   const locOptionsHtml = `<option value="">Chung (toàn quán)</option>` + activeLocations()
     .map(([id, l]) => `<option value="${id}">${escapeHtml(l.name)}${l.type === "kitchen" ? " (bếp)" : ""}</option>`).join("");
@@ -974,8 +1266,10 @@ async function renderThuChi() {
   });
   fromEl.addEventListener("change", loadAndRenderThuChi);
   toEl.addEventListener("change", loadAndRenderThuChi);
-  $("#tc-filter-loai").addEventListener("change", renderThuChiFiltered);
-  $("#tc-filter-location").addEventListener("change", renderThuChiFiltered);
+  $("#tc-filter-loai").addEventListener("change", () => { tcListLimit = 30; renderThuChiFiltered(); });
+  $("#tc-filter-location").addEventListener("change", () => { tcListLimit = 30; renderThuChiFiltered(); });
+  $("#tc-search").addEventListener("input", () => { tcListLimit = 30; renderThuChiFiltered(); });
+  $('[data-bind="tc-list-more"]').addEventListener("click", () => { tcListLimit += 30; renderThuChiFiltered(); });
 
   $("#btn-tc-cancel").addEventListener("click", () => resetThuChiForm());
 
@@ -994,20 +1288,19 @@ async function renderThuChi() {
       soTien,
       locationId: $("#tc-location").value || "",
       ghiChu: $("#tc-ghichu").value.trim(),
+      anhHoaDon: tcReceiptCtl ? tcReceiptCtl.get() : "",
       updatedAt: serverTimestamp(),
     };
-    try {
-      if (editingThuChiId) {
-        await updateDoc(doc(db, "thuchi", editingThuChiId), payload);
-        toast("Đã cập nhật giao dịch");
-      } else {
-        payload.createdAt = serverTimestamp();
-        await addDoc(collection(db, "thuchi"), payload);
-        toast("Đã lưu giao dịch");
+    const wasEditing = !!editingThuChiId;
+    if (!wasEditing) payload.createdAt = serverTimestamp();
+    await saveOp(
+      () => (wasEditing ? updateDoc(doc(db, "thuchi", editingThuChiId), payload) : addDoc(collection(db, "thuchi"), payload)),
+      async (confirmed) => {
+        toast(wasEditing ? "Đã cập nhật giao dịch" : (confirmed ? "Đã lưu giao dịch" : "Đã lưu (chưa có mạng — sẽ tự đồng bộ)"));
+        resetThuChiForm();
+        await loadAndRenderThuChi();
       }
-      resetThuChiForm();
-      await loadAndRenderThuChi();
-    } catch (err) { console.error(err); toast("Lỗi khi lưu giao dịch"); }
+    );
   });
 
   await loadAndRenderThuChi();
@@ -1021,6 +1314,7 @@ function resetThuChiForm() {
   $("#tc-date").value = todayISO();
   $("#tc-loai").value = "chi";
   $("#btn-tc-cancel").hidden = true;
+  tcReceiptCtl?.set("");
 }
 
 async function loadAndRenderThuChi() {
@@ -1042,9 +1336,11 @@ async function loadAndRenderThuChi() {
 function renderThuChiFiltered() {
   const loaiFilter = $("#tc-filter-loai").value;
   const locFilter = $("#tc-filter-location").value;
+  const term = $("#tc-search")?.value.trim() || "";
   let rows = thuChiCacheGlobal;
   if (loaiFilter) rows = rows.filter((r) => r.loai === loaiFilter);
   if (locFilter) rows = rows.filter((r) => r.locationId === locFilter);
+  if (term) rows = rows.filter((r) => matchesSearch(r, term, ["danhMuc", "ghiChu"]));
 
   const tongThu = rows.filter((r) => r.loai === "thu").reduce((s, r) => s + (r.soTien || 0), 0);
   const tongChi = rows.filter((r) => r.loai === "chi").reduce((s, r) => s + (r.soTien || 0), 0);
@@ -1060,7 +1356,9 @@ function renderThuChiFiltered() {
 
   const sorted = [...rows].sort((a, b) => (a.date < b.date ? 1 : -1));
   const listEl = $('[data-bind="tc-list"]');
-  if (listEl) listEl.innerHTML = renderThuChiCards(sorted) || emptyState("Không có giao dịch nào trong khoảng này");
+  if (listEl) listEl.innerHTML = renderThuChiCards(sorted.slice(0, tcListLimit)) || emptyState("Không có giao dịch nào trong khoảng này");
+  const moreEl = $('[data-bind="tc-list-more"]');
+  if (moreEl) moreEl.hidden = sorted.length <= tcListLimit;
 }
 
 function renderThuChiCards(rows) {
@@ -1076,6 +1374,7 @@ function renderThuChiCards(rows) {
         <span>${escapeHtml(tcLocationLabel(r.locationId))}</span>
       </div>
       ${r.ghiChu ? `<div class="entry-note">${escapeHtml(r.ghiChu)}</div>` : ""}
+      ${receiptThumbHtml(r.anhHoaDon)}
       <div class="entry-row-actions">
         <button class="link-btn" data-tc-edit="${r.id}">Sửa</button>
         <button class="link-btn danger" data-tc-del="${r.id}">Xoá</button>
@@ -1110,6 +1409,7 @@ async function renderBaoCao() {
   fromEl.addEventListener("change", loadReport);
   toEl.addEventListener("change", loadReport);
   $("#btn-export-csv").addEventListener("click", exportCsv);
+  $("#btn-export-pdf").addEventListener("click", () => window.print());
 
   await loadReport();
 }
@@ -1123,11 +1423,13 @@ async function loadReport() {
   const locFilter = $("#report-location").value;
   const sumEl = $('[data-bind="report-summary"]');
   sumEl.innerHTML = `<div class="stat-card"><div class="label">Đang tải…</div></div>`;
+  let giaVonPerPhan = 0;
   try {
-    [reportEntriesCache, reportIngCache, reportThuChiCache] = await Promise.all([
+    [reportEntriesCache, reportIngCache, reportThuChiCache, giaVonPerPhan] = await Promise.all([
       fetchEntriesByRange(from, to),
       fetchIngredientsByRange(from, to),
       fetchThuChiByRange(from, to),
+      computeGiaVonPerPhan(),
     ]);
   } catch (err) {
     console.error(err);
@@ -1145,33 +1447,99 @@ async function loadReport() {
   const selectedIsPoint = locFilter && locationsDirectory[locFilter]?.type === "point";
   const ingScoped = locFilter ? reportIngCache.filter((r) => r.locationId === locFilter) : reportIngCache;
   const chiPhiNL = selectedIsPoint ? 0 : ingScoped.reduce((s, r) => s + (r.tien || 0), 0);
+  // Đã đặt định mức nguyên liệu/phần ở Quản lý → phân bổ giá vốn NL theo số
+  // lượng bán thực tế, áp dụng được cho cả từng điểm bán (không chỉ "Tất cả điểm").
+  const coBOM = giaVonPerPhan > 0;
+  const giaVonNLPhanBo = giaVonPerPhan * tongSoLuong;
 
   const tcScoped = locFilter ? reportThuChiCache.filter((r) => r.locationId === locFilter) : reportThuChiCache;
   const thuKhac = tcScoped.filter((r) => r.loai === "thu").reduce((s, r) => s + (r.soTien || 0), 0);
   const chiKhac = tcScoped.filter((r) => r.loai === "chi").reduce((s, r) => s + (r.soTien || 0), 0);
 
-  const loiNhuan = doanhThu - chiPhiNL - luongThuong + thuKhac - chiKhac;
+  const chiPhiNLDungTinhLoiNhuan = coBOM ? giaVonNLPhanBo : chiPhiNL;
+  const loiNhuan = doanhThu - chiPhiNLDungTinhLoiNhuan - luongThuong + thuKhac - chiKhac;
 
   sumEl.innerHTML = `
     <div class="stat-card gold"><div class="label">Doanh thu ước tính</div><div class="value">${fmt(doanhThu)}</div></div>
     <div class="stat-card"><div class="label">Số lượng bán</div><div class="value">${fmtNum(tongSoLuong)}</div></div>
-    <div class="stat-card accent"><div class="label">Chi phí nguyên liệu${selectedIsPoint ? " (—)" : ""}</div><div class="value">${fmt(chiPhiNL)}</div></div>
+    ${coBOM
+      ? `<div class="stat-card accent"><div class="label">Giá vốn NL (theo định mức)</div><div class="value">${fmt(giaVonNLPhanBo)}</div></div>`
+      : `<div class="stat-card accent"><div class="label">Chi phí nguyên liệu${selectedIsPoint ? " (—)" : ""}</div><div class="value">${fmt(chiPhiNL)}</div></div>`}
     <div class="stat-card accent"><div class="label">Lương + thưởng</div><div class="value">${fmt(luongThuong)}</div></div>
     <div class="stat-card gold"><div class="label">Thu khác</div><div class="value">${fmt(thuKhac)}</div></div>
     <div class="stat-card accent"><div class="label">Chi khác</div><div class="value">${fmt(chiKhac)}</div></div>
     <div class="stat-card"><div class="label">Lợi nhuận ước tính</div><div class="value">${fmt(loiNhuan)}</div></div>
   `;
-  if (selectedIsPoint) {
-    sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Chi phí nguyên liệu phát sinh chung ở bếp trung tâm nên không chia theo từng điểm bán — xem ở lựa chọn "Tất cả điểm" hoặc điểm bếp.</p>`);
+  if (coBOM) {
+    sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Giá vốn NL ước tính = ${fmt(giaVonPerPhan)}/phần × số lượng bán, theo định mức đặt ở mục Quản lý — áp dụng được cho cả từng điểm bán.</p>`);
+  } else if (selectedIsPoint) {
+    sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Chi phí nguyên liệu phát sinh chung ở bếp trung tâm nên không chia theo từng điểm bán — xem ở lựa chọn "Tất cả điểm" hoặc điểm bếp. (Đặt định mức nguyên liệu/phần ở mục Quản lý để tự động phân bổ theo điểm.)</p>`);
   }
 
-  renderByLocationTable(allWorked, reportIngCache, locFilter);
+  renderByLocationTable(allWorked, reportIngCache, locFilter, giaVonPerPhan);
   renderByStaffTable(worked, !locFilter);
   renderDailyBarChart(worked, from, to);
+  await renderMonthlyChart(locFilter, giaVonPerPhan);
   await renderSettlements(worked);
 }
 
-function renderByLocationTable(allWorked, allIng, locFilter) {
+// Biểu đồ doanh thu + lợi nhuận ước tính theo tháng (6 tháng gần nhất), độc
+// lập với khoảng ngày đang lọc ở trên để luôn thấy được xu hướng dài hạn.
+async function renderMonthlyChart(locFilter, giaVonPerPhan = 0) {
+  const el = $('[data-bind="report-monthly-chart"]');
+  if (!el) return;
+  el.innerHTML = `<p class="empty-state">Đang tải…</p>`;
+  const MONTHS_BACK = 6;
+  try {
+    const toStr = todayISO();
+    const fromDate = new Date(toStr + "T00:00:00");
+    fromDate.setMonth(fromDate.getMonth() - (MONTHS_BACK - 1));
+    fromDate.setDate(1);
+    const fromStr = isoLocal(fromDate);
+    const rows = await fetchEntriesByRange(fromStr, toStr);
+    const worked = rows.filter((r) => !r.offDay && (!locFilter || r.locationId === locFilter));
+
+    const byMonth = {};
+    worked.forEach((r) => {
+      const m = r.date.slice(0, 7);
+      byMonth[m] = byMonth[m] || { doanhThu: 0, luongThuong: 0, soLuong: 0 };
+      byMonth[m].doanhThu += (r.soLuong || 0) * locationGiaBan(r.locationId);
+      byMonth[m].luongThuong += r.tong || 0;
+      byMonth[m].soLuong += r.soLuong || 0;
+    });
+
+    const months = [];
+    const cursor = new Date(fromStr + "T00:00:00");
+    for (let i = 0; i < MONTHS_BACK; i++) {
+      months.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`);
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    const dataRows = months.map((m) => {
+      const d = byMonth[m] || { doanhThu: 0, luongThuong: 0, soLuong: 0 };
+      const giaVonNL = giaVonPerPhan * d.soLuong;
+      const loiNhuan = d.doanhThu - d.luongThuong - giaVonNL;
+      return { month: m, ...d, loiNhuan };
+    });
+    const max = Math.max(1, ...dataRows.map((d) => d.doanhThu));
+
+    el.innerHTML = `
+      <p class="eyebrow">Doanh thu ${MONTHS_BACK} tháng gần nhất${giaVonPerPhan > 0 ? " (lợi nhuận đã trừ giá vốn NL theo định mức)" : ""}</p>
+      ${dataRows.map((d) => `
+        <div class="bar-row">
+          <span class="bar-label">Th${d.month.slice(5, 7)}/${d.month.slice(2, 4)}</span>
+          <span class="bar-track"><span class="bar-fill" style="width:${Math.max(3, (d.doanhThu / max) * 100)}%"></span></span>
+          <span class="bar-value">${fmtNum(d.doanhThu)}</span>
+        </div>
+      `).join("")}
+      <p class="hint-text">Lợi nhuận ước tính theo tháng: ${dataRows.map((d) => `Th${d.month.slice(5, 7)}: ${fmt(d.loiNhuan)}`).join(" · ")}</p>
+    `;
+  } catch (err) {
+    console.error(err);
+    el.innerHTML = emptyState("Không tải được biểu đồ theo tháng");
+  }
+}
+
+function renderByLocationTable(allWorked, allIng, locFilter, giaVonPerPhan = 0) {
   const el = $('[data-bind="report-by-location"]');
   const wrap = $('[data-bind="report-by-location-wrap"]');
   if (!el || !wrap) return;
@@ -1188,14 +1556,19 @@ function renderByLocationTable(allWorked, allIng, locFilter) {
   const rows = Object.values(groups).sort((a, b) => b.doanhThu - a.doanhThu);
   if (!rows.length) { el.innerHTML = emptyState("Chưa có dữ liệu"); return; }
   const chiPhiNLTong = allIng.reduce((s, r) => s + (r.tien || 0), 0);
+  const coBOM = giaVonPerPhan > 0;
   el.innerHTML = `
     <table class="data-table">
-      <thead><tr><th>Điểm bán</th><th>Số lượng</th><th>Doanh thu</th><th>Lương+thưởng</th><th>Lãi (chưa trừ NL)</th></tr></thead>
+      <thead><tr><th>Điểm bán</th><th>Số lượng</th><th>Doanh thu</th><th>Lương+thưởng</th>${coBOM ? "<th>Giá vốn NL</th>" : ""}<th>Lãi ước tính${coBOM ? "" : " (chưa trừ NL)"}</th></tr></thead>
       <tbody>
-        ${rows.map((g) => `<tr><td>${escapeHtml(g.name)}</td><td>${fmtNum(g.soLuong)}</td><td>${fmt(g.doanhThu)}</td><td>${fmt(g.luongThuong)}</td><td><b>${fmt(g.doanhThu - g.luongThuong)}</b></td></tr>`).join("")}
+        ${rows.map((g) => {
+          const giaVonNL = coBOM ? giaVonPerPhan * g.soLuong : 0;
+          const lai = g.doanhThu - g.luongThuong - giaVonNL;
+          return `<tr><td>${escapeHtml(g.name)}</td><td>${fmtNum(g.soLuong)}</td><td>${fmt(g.doanhThu)}</td><td>${fmt(g.luongThuong)}</td>${coBOM ? `<td>${fmt(giaVonNL)}</td>` : ""}<td><b>${fmt(lai)}</b></td></tr>`;
+        }).join("")}
       </tbody>
     </table>
-    <p class="hint-text">Chi phí nguyên liệu toàn hệ thống (dùng chung ở bếp trung tâm): <b>${fmt(chiPhiNLTong)}</b> — chưa phân bổ vào từng điểm ở bảng trên.</p>
+    <p class="hint-text">Chi phí nguyên liệu thực nhập toàn hệ thống (bếp trung tâm): <b>${fmt(chiPhiNLTong)}</b>${coBOM ? " — dùng để đối chiếu với giá vốn ước tính theo định mức ở bảng trên." : " — chưa phân bổ vào từng điểm ở bảng trên (đặt định mức nguyên liệu/phần ở mục Quản lý để tự động phân bổ)."}</p>
   `;
 }
 
@@ -1463,17 +1836,20 @@ async function renderQuanLy() {
     e.preventDefault();
     const name = $("#staff-name").value.trim();
     const email = $("#staff-email").value.trim();
-    const password = $("#staff-password").value;
     const role = $("#staff-role").value;
     const staffLocationId = $("#staff-location").value;
     if (!staffLocationId) { toast("Chọn điểm bán cho nhân viên"); return; }
     const btn = e.submitter;
     btn.disabled = true;
     try {
+      // Không cần chủ quán gõ/lộ mật khẩu tạm: tự sinh 1 mật khẩu ngẫu nhiên
+      // nội bộ chỉ để thoả điều kiện tạo tài khoản, rồi gửi ngay email đặt
+      // lại mật khẩu cho nhân viên tự chọn mật khẩu của họ.
+      const tempPassword = "Xoi-" + Math.random().toString(36).slice(2, 10) + "!" + Math.floor(Math.random() * 100);
       const secondary = initializeApp(firebaseConfig, "Secondary-" + Date.now());
       const secondaryAuth = getAuth(secondary);
       try {
-        const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+        const cred = await createUserWithEmailAndPassword(secondaryAuth, email, tempPassword);
         await setDoc(doc(db, "users", cred.user.uid), {
           name, role, email, locationId: staffLocationId, active: true, createdAt: serverTimestamp(),
         });
@@ -1481,7 +1857,13 @@ async function renderQuanLy() {
       } finally {
         await deleteApp(secondary);
       }
-      toast("Đã tạo tài khoản cho " + name);
+      try {
+        await sendPasswordResetEmail(auth, email);
+        toast(`Đã tạo tài khoản cho ${name} và gửi email đặt mật khẩu tới ${email}`);
+      } catch (mailErr) {
+        console.error(mailErr);
+        toast(`Đã tạo tài khoản cho ${name}, nhưng gửi email đặt mật khẩu thất bại — bấm "Gửi lại email đổi mật khẩu" ở danh sách bên dưới để thử lại.`);
+      }
       $("#form-staff").reset();
       await loadStaffDirectory();
       renderStaffList();
@@ -1497,6 +1879,81 @@ async function renderQuanLy() {
   renderLocationList();
   await loadStaffDirectory();
   renderStaffList();
+  await renderItemCatalogSection();
+}
+
+async function renderItemCatalogSection() {
+  const el = $('[data-bind="catalog-table"]');
+  const sumEl = $('[data-bind="catalog-cost-summary"]');
+  if (!el) return;
+  el.innerHTML = `<p class="empty-state">Đang tải…</p>`;
+  try {
+    const from = addDays(todayISO(), -STOCK_WINDOW_DAYS);
+    const ingRows = await fetchIngredientsByRange(from, todayISO());
+    const costMap = avgUnitCostMap(ingRows);
+    const names = new Set([...Object.keys(itemCatalog), ...Object.keys(costMap), ...ITEM_SUGGESTIONS]);
+    const rows = Array.from(names).filter(Boolean).sort((a, b) => a.localeCompare(b, "vi"));
+    if (!rows.length) { el.innerHTML = emptyState("Chưa có nguyên liệu nào"); if (sumEl) sumEl.textContent = ""; return; }
+
+    el.innerHTML = `
+      <table class="data-table">
+        <thead><tr><th>Nguyên liệu</th><th>Đơn vị</th><th>Giá TB/đvị</th><th>Định mức/phần</th><th>Ngưỡng cảnh báo</th><th></th></tr></thead>
+        <tbody>
+          ${rows.map((name) => {
+            const cat = itemCatalog[name] || {};
+            const cost = costMap[name];
+            const unit = cat.unit || (cost ? cost.unit : "") || "";
+            return `<tr data-item="${escapeHtml(name)}" data-unit="${escapeHtml(unit)}">
+              <td>${escapeHtml(name)}</td>
+              <td>${escapeHtml(unit)}</td>
+              <td>${cost && cost.avgCost ? fmt(cost.avgCost) : "—"}</td>
+              <td><input type="number" class="cat-qty" min="0" step="0.01" value="${cat.qtyPerPortion ?? ""}" style="width:78px" /></td>
+              <td><input type="number" class="cat-threshold" min="0" step="0.1" value="${cat.threshold ?? ""}" style="width:78px" /></td>
+              <td><button type="button" class="link-btn cat-save">Lưu</button></td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    `;
+
+    $$(".cat-save", el).forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const tr = btn.closest("tr");
+        const name = tr.dataset.item;
+        const unit = tr.dataset.unit || $(".cat-qty", tr).closest("tr").children[1].textContent.trim();
+        const qtyPerPortion = parseFloat($(".cat-qty", tr).value) || 0;
+        const threshold = parseFloat($(".cat-threshold", tr).value) || 0;
+        const existingId = itemCatalog[name]?.id || slugifyItemName(name);
+        try {
+          await setDoc(doc(db, "itemCatalog", existingId), {
+            itemName: name, unit, qtyPerPortion, threshold, updatedAt: serverTimestamp(),
+          });
+          itemCatalog[name] = { id: existingId, itemName: name, unit, qtyPerPortion, threshold };
+          toast("Đã lưu định mức: " + name);
+          updateCatalogCostSummary(costMap);
+        } catch (err) { console.error(err); toast("Không lưu được: " + (err.message || "")); }
+      });
+    });
+
+    updateCatalogCostSummary(costMap);
+  } catch (err) {
+    console.error(err);
+    el.innerHTML = emptyState("Không tải được dữ liệu");
+  }
+
+  function updateCatalogCostSummary(costMap) {
+    if (!sumEl) return;
+    let total = 0, count = 0;
+    Object.entries(itemCatalog).forEach(([name, cat]) => {
+      if (!cat.qtyPerPortion) return;
+      const c = costMap[name];
+      total += (cat.qtyPerPortion || 0) * (c ? c.avgCost : 0);
+      count++;
+    });
+    sumEl.textContent = count
+      ? `Giá vốn nguyên liệu ước tính / phần xôi (theo ${count} định mức đã đặt): ${fmt(total)} — dùng để phân bổ chi phí NL theo điểm bán trong Báo cáo.`
+      : "Chưa đặt định mức nào — nhập số vào cột \"Định mức/phần\" rồi bấm Lưu để bắt đầu tính giá vốn.";
+  }
 }
 
 function resetLocationForm() {
@@ -1554,11 +2011,25 @@ function renderStaffList() {
         <span class="${u.role === "admin" ? "badge-paid" : "badge-unpaid"}" style="background:${u.role === "admin" ? "var(--gold-tint)" : "var(--green-tint)"};color:${u.role === "admin" ? "var(--gold)" : "var(--green-dark)"}">${u.role === "admin" ? "Chủ quán" : "Nhân viên"}</span>
       </div>
       <div class="entry-meta"><span>${escapeHtml(u.email || "")}</span><span>${escapeHtml(locationName(u.locationId))}</span></div>
-      ${uid !== currentUser.uid ? `<div class="entry-row-actions">
-        <button class="link-btn" data-toggle-active="${uid}">${u.active === false ? "Kích hoạt lại" : "Vô hiệu hoá"}</button>
-      </div>` : `<div class="entry-note">Tài khoản của bạn</div>`}
+      <div class="entry-row-actions">
+        ${u.email ? `<button class="link-btn" data-resend-reset="${uid}">Gửi lại email đổi mật khẩu</button>` : ""}
+        ${uid !== currentUser.uid ? `<button class="link-btn" data-toggle-active="${uid}">${u.active === false ? "Kích hoạt lại" : "Vô hiệu hoá"}</button>` : ""}
+      </div>
+      ${uid === currentUser.uid ? `<div class="entry-note">Tài khoản của bạn</div>` : ""}
     </div>
   `).join("");
+
+  $$("[data-resend-reset]", el).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const uid = btn.dataset.resendReset;
+      const u = staffDirectory[uid];
+      if (!u?.email) return;
+      try {
+        await sendPasswordResetEmail(auth, u.email);
+        toast("Đã gửi email đổi mật khẩu tới " + u.email);
+      } catch (err) { console.error(err); toast("Không gửi được email"); }
+    });
+  });
 
   $$("[data-toggle-active]", el).forEach((btn) => {
     btn.addEventListener("click", async () => {

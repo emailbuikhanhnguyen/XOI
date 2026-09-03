@@ -4,6 +4,12 @@ App web (PWA) quản lý quán xôi có **1 bếp trung tâm + nhiều điểm b
 công/lương theo từng điểm, nguyên liệu & tồn kho ở bếp, chuyển hàng ra điểm
 bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ thống.
 
+> **Đang nâng cấp từ bản cũ?** Bản này có thêm collection Firestore mới
+> (`itemCatalog`) và cập nhật `firestore.rules`. Sau khi đưa code mới lên,
+> nhớ vào **Firebase Console → Firestore Database → Rules**, dán lại toàn bộ
+> nội dung file `firestore.rules` mới rồi bấm **Publish** — nếu quên bước
+> này, mục "Định mức nguyên liệu" ở Quản lý sẽ báo lỗi khi lưu.
+
 ## Mô hình dữ liệu
 
 - **Locations** (`locations`): danh sách các điểm — 1 hoặc nhiều **Bếp trung
