@@ -4,14 +4,15 @@ App web (PWA) quản lý quán xôi có **1 bếp trung tâm + nhiều điểm b
 công/lương theo từng điểm, nguyên liệu & tồn kho ở bếp, chuyển hàng ra điểm
 bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ thống.
 
-> **Đang nâng cấp từ bản cũ?** Bản này có thêm collection Firestore mới
-> (`itemCatalog`, `orders`) và cập nhật `firestore.rules` (thêm quyền cho
-> chủ quán tạo phiếu chấm công hộ nhân viên). Sau khi đưa code mới lên, nhớ
-> vào **Firebase Console → Firestore Database → Rules**, dán lại toàn bộ nội
-> dung file `firestore.rules` mới rồi bấm **Publish** — nếu quên bước này,
-> mục "Định mức nguyên liệu" ở Quản lý, mục "Đặt hàng nguyên liệu" ở điểm
-> bán, và việc chủ quán tạo phiếu chấm công mới cho nhân viên khác sẽ báo
-> lỗi khi lưu.
+> **Đang nâng cấp từ bản cũ?** Bản này cập nhật `firestore.rules`: nới quyền
+> ghi `itemCatalog` (định mức/ngưỡng cảnh báo/phân loại nguyên liệu) từ
+> "chỉ chủ quán" thành "ai đã đăng nhập cũng ghi được", để nhân viên bếp tự
+> phân loại "Sản xuất/Điểm bán" ở mục Kiểm kê kho mà không cần quyền admin.
+> Sau khi đưa code mới lên, nhớ vào **Firebase Console → Firestore Database →
+> Rules**, dán lại toàn bộ nội dung file `firestore.rules` mới rồi bấm
+> **Publish** — nếu quên bước này, nhân viên bếp (không phải chủ quán) sẽ
+> không tick được ô phân loại Sản xuất/Điểm bán ở mục Kiểm kê kho (báo lỗi
+> khi lưu).
 
 ## Mô hình dữ liệu
 
@@ -43,14 +44,17 @@ bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ
 
 ## Tính năng theo vai trò
 
-- **Chủ quán (admin)**: thấy toàn bộ hệ thống — quản lý điểm bán/bếp, tạo tài
-  khoản nhân viên và gán điểm, xem kho + chuyển hàng ở mọi bếp, ghi sổ Thu &
-  chi (mục "Thu chi" trên thanh điều hướng), xem báo cáo toàn hệ thống hoặc
-  từng điểm. Ở màn **Chấm công**, chủ quán có thêm ô chọn "Xem / sửa chấm
-  công của" để xem, sửa, xoá hoặc tạo mới phiếu chấm công **của bất kỳ nhân
-  viên nào**, không chỉ của chính mình.
+- **Chủ quán (admin)**: thấy toàn bộ hệ thống — quản lý điểm bán/bếp, tạo/sửa/
+  xoá tài khoản nhân viên (đổi tên, vai trò, điểm làm việc — không đổi được
+  email đăng nhập), xem kho + chuyển hàng ở mọi bếp, ghi sổ Thu & chi (mục
+  "Thu chi" trên thanh điều hướng), xem báo cáo toàn hệ thống hoặc từng điểm.
+  Ở màn **Chấm công**, chủ quán có thêm ô chọn "Xem / sửa chấm công của" để
+  xem, sửa, xoá hoặc tạo mới phiếu chấm công **của bất kỳ nhân viên nào**,
+  không chỉ của chính mình.
 - **Nhân viên tại bếp trung tâm**: chấm công như bình thường, cộng thêm quyền
-  nhập nguyên liệu, ghi nhận chuyển hàng cho các điểm bán, xem tồn kho.
+  nhập nguyên liệu, ghi nhận chuyển hàng cho các điểm bán, xem tồn kho, và
+  dùng mục **Kiểm kê kho** để nhập tồn thực tế, sửa/xoá các lần điều chỉnh đã
+  lưu, và đánh dấu từng nguyên liệu dùng cho Sản xuất và/hoặc Điểm bán.
 - **Nhân viên tại điểm bán**: chấm công (lương, số lượng bán, thưởng, ship,
   xôi ế/dẹp — giống bảng cũ), xem (không sửa) danh sách hàng đã nhận từ bếp,
   và tự gửi yêu cầu đặt hàng nguyên liệu cần cho bếp trung tâm.
@@ -165,7 +169,21 @@ chính"** để dùng như một app thật.
   Kho (bếp/admin), bấm **"Kiểm kê kho"** cạnh bảng Tồn kho hiện tại để nhập
   tồn kho ban đầu hoặc đối chiếu định kỳ: nhập số đếm thực tế cho từng
   nguyên liệu, hệ thống tự tính chênh lệch và ghi 1 dòng "nhập nguyên liệu"
-  điều chỉnh (âm hoặc dương) — không cần tính tay.
+  điều chỉnh (âm hoặc dương) — không cần tính tay. Mục "Các lần điều chỉnh
+  kiểm kê gần đây" ngay trong Kiểm kê kho cho sửa/xoá lại nếu lỡ nhập nhầm.
+- **Sản xuất / Điểm bán**: ô chọn "Tất cả / Sản xuất / Điểm bán" cạnh bảng Tồn
+  kho hiện tại lọc nguyên liệu theo mục đích dùng — tick "SX"/"ĐB" ở bảng
+  Kiểm kê kho để phân loại (1 nguyên liệu tick được cả 2, ví dụ gạo nếp vừa
+  dùng nấu vừa bán lẻ). Chưa tick gì thì mặc định coi là "Sản xuất" (không bị
+  mất khỏi màn hình mặc định), phải tự tick "ĐB" cho nguyên liệu nào cũng
+  dùng ở điểm bán.
+- **Đơn vị nguyên liệu** (kg, gói, cái...) giờ là ô gõ tự do (có gợi ý), không
+  còn giới hạn trong danh sách cố định — gõ đơn vị nào cũng được.
+- Mục **"Định mức nguyên liệu / phần"** ở Quản lý đã được gỡ bỏ theo yêu cầu
+  (không còn màn hình để thêm/sửa định mức và ngưỡng cảnh báo tồn kho mới) —
+  nhưng dữ liệu định mức/ngưỡng đã đặt từ trước vẫn được dùng bình thường cho
+  cảnh báo tồn kho thấp (mục Kho) và giá vốn nguyên liệu theo định mức (mục
+  Báo cáo).
 - Đổi tên/giá bán/lương mặc định của 1 điểm ở mục Quản lý sẽ áp dụng cho các
   phiếu **mới** từ lúc đó; phiếu cũ đã lưu không bị tính lại.
 

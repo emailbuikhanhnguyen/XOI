@@ -203,14 +203,7 @@
           </label>
           <label class="field">
             <span>Đơn vị</span>
-            <select id="order-unit">
-              <option value="kg">kg</option>
-              <option value="gr">gr</option>
-              <option value="lít">lít</option>
-              <option value="cái">cái</option>
-              <option value="gói">gói</option>
-              <option value="phần">phần</option>
-            </select>
+            <input type="text" id="order-unit" list="unit-suggestions" value="kg" placeholder="VD: kg" />
           </label>
         </div>
         <label class="field">
@@ -252,13 +245,7 @@
           </label>
           <label class="field">
             <span>Đơn vị</span>
-            <select id="ing-unit">
-              <option value="kg">kg</option>
-              <option value="gr">gr</option>
-              <option value="lít">lít</option>
-              <option value="cái">cái</option>
-              <option value="gói">gói</option>
-            </select>
+            <input type="text" id="ing-unit" list="unit-suggestions" value="kg" placeholder="VD: kg" />
           </label>
         </div>
         <label class="field">
@@ -316,13 +303,7 @@
           </label>
           <label class="field">
             <span>Đơn vị</span>
-            <select id="trf-unit">
-              <option value="phần">phần</option>
-              <option value="kg">kg</option>
-              <option value="gr">gr</option>
-              <option value="cái">cái</option>
-              <option value="gói">gói</option>
-            </select>
+            <input type="text" id="trf-unit" list="unit-suggestions" value="phần" placeholder="VD: phần" />
           </label>
         </div>
         <label class="field">
@@ -345,13 +326,20 @@
 
       <div class="section-row">
         <h3 class="section-heading">Tồn kho hiện tại</h3>
-        <button type="button" class="link-btn" data-bind="stocktake-toggle">Kiểm kê kho</button>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <select id="kho-loai-filter" class="select-chip">
+            <option value="tatca">Tất cả</option>
+            <option value="sanxuat">Sản xuất</option>
+            <option value="diemban">Điểm bán</option>
+          </select>
+          <button type="button" class="link-btn" data-bind="stocktake-toggle">Kiểm kê kho</button>
+        </div>
       </div>
       <div class="table-wrap" data-bind="stock-table"></div>
 
       <div data-bind="stocktake-section" hidden>
         <h3 class="section-heading">Kiểm kê kho (đối chiếu tồn thực tế)</h3>
-        <p class="hint-text">Nhập số đếm được thực tế cho từng nguyên liệu — dùng để nhập tồn kho ban đầu (khi mới bắt đầu dùng app) hoặc đối chiếu định kỳ. Hệ thống tự tính chênh lệch và ghi 1 dòng "nhập nguyên liệu" điều chỉnh (âm hoặc dương) cho từng nguyên liệu bạn Lưu — không ảnh hưởng các nguyên liệu chưa nhập.</p>
+        <p class="hint-text">Nhập số đếm được thực tế cho từng nguyên liệu — dùng để nhập tồn kho ban đầu (khi mới bắt đầu dùng app) hoặc đối chiếu định kỳ. Hệ thống tự tính chênh lệch và ghi 1 dòng "nhập nguyên liệu" điều chỉnh (âm hoặc dương) cho từng nguyên liệu bạn Lưu. Tick "SX"/"ĐB" để đánh dấu nguyên liệu dùng cho sản xuất và/hoặc dùng cho điểm bán (1 nguyên liệu có thể thuộc cả 2) — lưu ngay khi tick, dùng để lọc ở ô "Tất cả/Sản xuất/Điểm bán" phía trên.</p>
         <div class="table-wrap" data-bind="stocktake-table"></div>
         <div class="grid-2" style="margin-top:14px;">
           <label class="field">
@@ -360,18 +348,16 @@
           </label>
           <label class="field">
             <span>Đơn vị</span>
-            <select id="stocktake-new-unit">
-              <option value="kg">kg</option>
-              <option value="gr">gr</option>
-              <option value="lít">lít</option>
-              <option value="cái">cái</option>
-              <option value="gói">gói</option>
-            </select>
+            <input type="text" id="stocktake-new-unit" list="unit-suggestions" value="kg" placeholder="VD: kg" />
           </label>
         </div>
         <div class="ticket-actions">
           <button type="button" class="btn btn-ghost" id="btn-stocktake-add">+ Thêm vào danh sách kiểm kê</button>
         </div>
+
+        <h3 class="section-heading" style="margin-top:18px;">Các lần điều chỉnh kiểm kê gần đây</h3>
+        <p class="hint-text">Sửa/xoá ngay tại đây nếu lỡ nhập nhầm khi kiểm kê.</p>
+        <div class="stack" data-bind="stocktake-history"></div>
       </div>
     </div>
   </section>
@@ -551,23 +537,18 @@
     </div>
     <div class="stack" data-bind="location-list"></div>
 
-    <h3 class="section-heading">Định mức nguyên liệu / phần &amp; cảnh báo tồn kho</h3>
-    <p class="hint-text">Đặt định mức nguyên liệu tiêu hao cho 1 phần xôi bán ra để ước tính giá vốn (dùng trong Báo cáo), và ngưỡng cảnh báo để biết khi nào sắp hết hàng. Giá TB/đơn vị tự tính từ lịch sử nhập hàng gần đây.</p>
-    <div class="table-wrap" data-bind="catalog-table"></div>
-    <p class="hint-text" data-bind="catalog-cost-summary"></p>
-
     <h3 class="section-heading">Nhân viên</h3>
     <form id="form-staff" class="ticket ticket-form">
-      <p class="eyebrow">Thêm nhân viên</p>
+      <p class="eyebrow" data-bind="staff-form-title">Thêm nhân viên</p>
       <label class="field">
         <span>Họ tên</span>
         <input type="text" id="staff-name" required />
       </label>
-      <label class="field">
+      <label class="field" data-bind="staff-email-field">
         <span>Email đăng nhập</span>
         <input type="email" id="staff-email" required />
       </label>
-      <p class="hint-text">Không cần đặt mật khẩu tạm — hệ thống tự gửi email cho nhân viên tự đặt mật khẩu đăng nhập lần đầu.</p>
+      <p class="hint-text" data-bind="staff-email-hint">Không cần đặt mật khẩu tạm — hệ thống tự gửi email cho nhân viên tự đặt mật khẩu đăng nhập lần đầu.</p>
       <label class="field">
         <span>Vai trò</span>
         <select id="staff-role">
@@ -580,7 +561,8 @@
         <select id="staff-location"></select>
       </label>
       <div class="ticket-actions">
-        <button type="submit" class="btn btn-primary">Tạo tài khoản</button>
+        <button type="button" id="btn-staff-cancel" class="btn btn-ghost" hidden>Huỷ sửa</button>
+        <button type="submit" class="btn btn-primary" data-bind="staff-submit-btn">Tạo tài khoản</button>
       </div>
     </form>
     <div class="stack" data-bind="staff-list"></div>

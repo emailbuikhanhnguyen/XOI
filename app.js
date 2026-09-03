@@ -78,6 +78,7 @@ let editingIngId = null;
 let editingTransferId = null;
 let editingLocationId = null;
 let editingThuChiId = null;
+let editingStaffUid = null;
 let ingReceiptCtl = null; // control ảnh hoá đơn của form nhập nguyên liệu (gắn trong renderKho)
 let tcReceiptCtl = null; // control ảnh hoá đơn của form thu chi (gắn trong renderThuChi)
 let itemCatalog = {}; // itemName -> { unit, qtyPerPortion, threshold } — định mức & ngưỡng cảnh báo (settings/itemCatalog)
@@ -85,6 +86,9 @@ let entryListLimit = 30, ingListLimit = 30, trfListLimit = 30, tcListLimit = 30;
 
 const STOCK_WINDOW_DAYS = 365; // khoảng thời gian dùng để tính tồn kho / lịch sử gần đây
 const ITEM_SUGGESTIONS = ["Gà", "Nấm", "Gạo nếp", "Đậu xanh", "Dầu ăn", "Hành phi", "Gia vị", "Nước tương", "Túi/hộp gói"];
+// Gợi ý đơn vị — chỉ là gợi ý trong ô nhập tự do (list=datalist), người dùng
+// vẫn gõ được bất kỳ đơn vị nào khác (đáp ứng yêu cầu "quyền tạo thêm đơn vị").
+const UNIT_SUGGESTIONS = ["kg", "gr", "lít", "ml", "cái", "gói", "phần", "thùng", "bó", "chai", "hộp", "lon", "túi"];
 const THU_CHI_CATEGORIES = [
   "Doanh thu khác", "Tiền mặt bằng", "Điện nước", "Sửa chữa/bảo trì",
   "Marketing/quảng cáo", "Vận chuyển", "Dụng cụ/vật tư", "Thuế/phí", "Chi phí khác",
@@ -1043,9 +1047,27 @@ let ordersCacheGlobal = [];
 // lịch sử nhập/chuyển nào ở bếp này) — chỉ tồn tại phía client cho tới khi
 // bấm Lưu, lúc đó mới ghi thành 1 dòng "nhập nguyên liệu" điều chỉnh thật sự.
 let stocktakeExtraItems = [];
+// Bộ lọc "Tất cả / Sản xuất / Điểm bán" dùng chung cho bảng Tồn kho hiện tại
+// và bảng Kiểm kê kho (xem passesLoaiFilter()).
+let khoLoaiFilter = "tatca";
 
 function itemDatalistHtml() {
-  return `<datalist id="item-suggestions">${ITEM_SUGGESTIONS.map((s) => `<option value="${escapeHtml(s)}"></option>`).join("")}</datalist>`;
+  return `<datalist id="item-suggestions">${ITEM_SUGGESTIONS.map((s) => `<option value="${escapeHtml(s)}"></option>`).join("")}</datalist>
+  <datalist id="unit-suggestions">${UNIT_SUGGESTIONS.map((s) => `<option value="${escapeHtml(s)}"></option>`).join("")}</datalist>`;
+}
+
+// Nguyên liệu này có thuộc nhóm đang lọc không? Chưa từng phân loại → mặc
+// định coi là "Sản xuất" (giữ đúng hành vi cũ, không mất khỏi màn hình mặc
+// định) và KHÔNG thuộc "Điểm bán" (phải tự đánh dấu). 1 nguyên liệu có thể
+// thuộc cả 2 nhóm cùng lúc. Nguyên liệu vừa tự thêm vào Kiểm kê kho (chưa kịp
+// lưu phân loại) luôn hiện, khỏi bị "biến mất" ngay sau khi thêm.
+function passesLoaiFilter(name) {
+  if (khoLoaiFilter === "tatca") return true;
+  if (stocktakeExtraItems.some((r) => r.itemName === name)) return true;
+  const cat = itemCatalog[name];
+  if (khoLoaiFilter === "sanxuat") return cat?.sanXuat !== false;
+  if (khoLoaiFilter === "diemban") return cat?.diemBan === true;
+  return true;
 }
 
 async function renderKho() {
@@ -1125,6 +1147,16 @@ async function renderKho() {
   }
 
   stocktakeExtraItems = [];
+  khoLoaiFilter = "tatca";
+  const khoLoaiFilterSel = $("#kho-loai-filter");
+  if (khoLoaiFilterSel) {
+    khoLoaiFilterSel.value = "tatca";
+    khoLoaiFilterSel.addEventListener("change", (e) => {
+      khoLoaiFilter = e.target.value;
+      renderStockTableUI();
+      renderStockTakeTable(opKitchenId);
+    });
+  }
   const stocktakeSection = $('[data-bind="stocktake-section"]');
   const stocktakeToggle = $('[data-bind="stocktake-toggle"]');
   if (stocktakeSection) stocktakeSection.hidden = true;
@@ -1255,38 +1287,55 @@ async function loadAndRenderKho(opKitchenId = operatingKitchenId()) {
     renderIngListUI();
     renderTrfListUI();
 
-    if (stockEl) {
-      const stock = computeStockMap();
-      const rows = Object.values(stock).sort((a, b) => a.itemName.localeCompare(b.itemName));
-      const lowRows = rows.filter((r) => {
-        const th = itemCatalog[r.itemName]?.threshold;
-        return th && r.ton < th;
-      });
-      const lowBannerHtml = lowRows.length ? `
-        <div class="reminder-banner">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
-          <span>Sắp hết ${lowRows.length} nguyên liệu: ${lowRows.map((r) => escapeHtml(r.itemName)).join(", ")}. Đặt/điều chỉnh ngưỡng cảnh báo ở mục Quản lý.</span>
-        </div>` : "";
-      stockEl.innerHTML = rows.length ? `
-        ${lowBannerHtml}
-        <table class="data-table">
-          <thead><tr><th>Nguyên liệu</th><th>Đơn vị</th><th>Tồn hiện tại</th></tr></thead>
-          <tbody>${rows.map((r) => {
-            const th = itemCatalog[r.itemName]?.threshold;
-            const isLow = th && r.ton < th;
-            return `<tr class="${isLow ? "stock-row-low" : ""}"><td>${escapeHtml(r.itemName)}</td><td>${escapeHtml(r.unit)}</td><td><b>${fmtNum(r.ton)}</b>${isLow ? ` <span class="badge-warn">Sắp hết</span>` : ""}</td></tr>`;
-          }).join("")}</tbody>
-        </table>
-        <p class="hint-text">Tồn kho tính trong ${STOCK_WINDOW_DAYS} ngày gần nhất (nhập − đã chuyển đi).</p>
-      ` : emptyState("Chưa có dữ liệu tồn kho");
-    }
+    renderStockTableUI();
     renderStockTakeTable(opKitchenId);
+    renderStocktakeHistory();
   } catch (err) {
     console.error(err);
     if (ingListEl) ingListEl.innerHTML = emptyState("Không tải được");
     if (trfListEl) trfListEl.innerHTML = emptyState("Không tải được");
     if (stockEl) stockEl.innerHTML = emptyState("Không tải được");
   }
+}
+
+// Bảng "Tồn kho hiện tại" — tách riêng khỏi loadAndRenderKho để đổi bộ lọc
+// Sản xuất/Điểm bán không cần tải lại dữ liệu từ Firestore.
+function renderStockTableUI() {
+  const stockEl = $('[data-bind="stock-table"]');
+  if (!stockEl) return;
+  const stock = computeStockMap();
+  const rows = Object.values(stock).filter((r) => passesLoaiFilter(r.itemName)).sort((a, b) => a.itemName.localeCompare(b.itemName));
+  const lowRows = rows.filter((r) => {
+    const th = itemCatalog[r.itemName]?.threshold;
+    return th && r.ton < th;
+  });
+  const lowBannerHtml = lowRows.length ? `
+    <div class="reminder-banner">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+      <span>Sắp hết ${lowRows.length} nguyên liệu: ${lowRows.map((r) => escapeHtml(r.itemName)).join(", ")}.</span>
+    </div>` : "";
+  stockEl.innerHTML = rows.length ? `
+    ${lowBannerHtml}
+    <table class="data-table">
+      <thead><tr><th>Nguyên liệu</th><th>Đơn vị</th><th>Tồn hiện tại</th></tr></thead>
+      <tbody>${rows.map((r) => {
+        const th = itemCatalog[r.itemName]?.threshold;
+        const isLow = th && r.ton < th;
+        return `<tr class="${isLow ? "stock-row-low" : ""}"><td>${escapeHtml(r.itemName)}</td><td>${escapeHtml(r.unit)}</td><td><b>${fmtNum(r.ton)}</b>${isLow ? ` <span class="badge-warn">Sắp hết</span>` : ""}</td></tr>`;
+      }).join("")}</tbody>
+    </table>
+    <p class="hint-text">Tồn kho tính trong ${STOCK_WINDOW_DAYS} ngày gần nhất (nhập − đã chuyển đi).</p>
+  ` : emptyState(khoLoaiFilter === "tatca" ? "Chưa có dữ liệu tồn kho" : "Chưa có nguyên liệu nào thuộc nhóm này — đánh dấu phân loại ở mục Kiểm kê kho bên dưới");
+}
+
+// Danh sách các lần điều chỉnh từ Kiểm kê kho gần đây, cho sửa/xoá ngay tại
+// đây thay vì phải tìm trong "Lịch sử nhập hàng" — tái dùng nguyên hàm
+// renderIngCards() + cơ chế data-ing-edit/data-ing-del đã có sẵn.
+function renderStocktakeHistory() {
+  const el = $('[data-bind="stocktake-history"]');
+  if (!el) return;
+  const rows = ingCacheGlobal.filter((r) => (r.ghiChu || "").startsWith("Kiểm kê kho:")).slice(0, 20);
+  el.innerHTML = renderIngCards(rows) || emptyState("Chưa có lần điều chỉnh kiểm kê nào");
 }
 
 // Tồn kho = tổng đã nhập − tổng đã chuyển đi, gộp theo tên nguyên liệu + đơn
@@ -1324,33 +1373,68 @@ function renderStockTakeTable(opKitchenId) {
     ...ITEM_SUGGESTIONS,
     ...stocktakeExtraItems.map((r) => r.itemName),
   ]);
-  const rows = Array.from(names).filter(Boolean).sort((a, b) => a.localeCompare(b, "vi")).map((name) => {
+  const rows = Array.from(names).filter(Boolean).filter(passesLoaiFilter).sort((a, b) => a.localeCompare(b, "vi")).map((name) => {
     const stockRow = stockByName[name];
     const extra = stocktakeExtraItems.find((r) => r.itemName === name);
     const unit = stockRow?.unit || itemCatalog[name]?.unit || extra?.unit || "kg";
     const computed = stockRow?.ton || 0;
-    return { itemName: name, unit, computed };
+    const cat = itemCatalog[name];
+    const isCustom = !!extra;
+    return {
+      itemName: name, unit, computed, isCustom,
+      sanXuat: cat?.sanXuat !== false,
+      diemBan: cat?.diemBan === true,
+    };
   });
 
-  if (!rows.length) { el.innerHTML = emptyState("Chưa có nguyên liệu nào — thêm ở form bên dưới"); return; }
+  if (!rows.length) {
+    el.innerHTML = emptyState(khoLoaiFilter === "tatca" ? "Chưa có nguyên liệu nào — thêm ở form bên dưới" : "Chưa có nguyên liệu nào thuộc nhóm này");
+    return;
+  }
 
   el.innerHTML = `
     <table class="data-table">
-      <thead><tr><th>Nguyên liệu</th><th>Đơn vị</th><th>Tồn hệ thống</th><th>Tồn thực tế</th><th>Đơn giá/đvị (tuỳ chọn)</th><th></th></tr></thead>
+      <thead><tr><th>Nguyên liệu</th><th>ĐV</th><th>SX</th><th>ĐB</th><th>Tồn HT</th><th>Tồn thực tế</th><th>Đơn giá/đvị</th><th></th></tr></thead>
       <tbody>
         ${rows.map((r) => `
           <tr data-item="${escapeHtml(r.itemName)}" data-unit="${escapeHtml(r.unit)}" data-computed="${r.computed}">
             <td>${escapeHtml(r.itemName)}</td>
             <td>${escapeHtml(r.unit)}</td>
+            <td><input type="checkbox" class="stk-sx" ${r.sanXuat ? "checked" : ""} title="Dùng cho sản xuất" /></td>
+            <td><input type="checkbox" class="stk-db" ${r.diemBan ? "checked" : ""} title="Dùng cho điểm bán" /></td>
             <td>${fmtNum(r.computed)}</td>
-            <td><input type="number" class="stk-actual" min="0" step="0.01" placeholder="${fmtNum(r.computed)}" style="width:88px" /></td>
-            <td><input type="number" class="stk-gia" min="0" step="1000" placeholder="đ" style="width:78px" /></td>
-            <td><button type="button" class="link-btn stk-save">Lưu</button></td>
+            <td><input type="number" class="stk-actual" min="0" step="0.01" placeholder="${fmtNum(r.computed)}" style="width:80px" /></td>
+            <td><input type="number" class="stk-gia" min="0" step="1000" placeholder="đ" style="width:70px" /></td>
+            <td class="entry-row-actions" style="flex-wrap:nowrap;">
+              <button type="button" class="link-btn stk-save">Lưu</button>
+              ${r.isCustom ? `<button type="button" class="link-btn stk-edit-custom">Sửa</button><button type="button" class="link-btn danger stk-del-custom">Xoá</button>` : ""}
+            </td>
           </tr>
         `).join("")}
       </tbody>
     </table>
   `;
+
+  $$(".stk-sx, .stk-db", el).forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      const tr = cb.closest("tr");
+      const name = tr.dataset.item;
+      const unit = tr.dataset.unit;
+      const sanXuat = $(".stk-sx", tr).checked;
+      const diemBan = $(".stk-db", tr).checked;
+      const existingId = itemCatalog[name]?.id || slugifyItemName(name);
+      try {
+        await setDoc(doc(db, "itemCatalog", existingId), {
+          itemName: name, unit, sanXuat, diemBan, updatedAt: serverTimestamp(),
+        }, { merge: true });
+        itemCatalog[name] = { ...(itemCatalog[name] || {}), id: existingId, itemName: name, unit, sanXuat, diemBan };
+        toast(`Đã lưu phân loại: ${name}`);
+      } catch (err) {
+        console.error(err);
+        toast("Không lưu được phân loại: " + (err.message || ""));
+      }
+    });
+  });
 
   $$(".stk-save", el).forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -1386,6 +1470,28 @@ function renderStockTakeTable(opKitchenId) {
         }
       );
       btn.disabled = false;
+    });
+  });
+
+  $$(".stk-edit-custom", el).forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tr = btn.closest("tr");
+      const name = tr.dataset.item;
+      const unit = tr.dataset.unit;
+      stocktakeExtraItems = stocktakeExtraItems.filter((r) => r.itemName !== name);
+      $("#stocktake-new-item").value = name;
+      $("#stocktake-new-unit").value = unit;
+      renderStockTakeTable(opKitchenId);
+      $("#stocktake-new-item").focus();
+    });
+  });
+
+  $$(".stk-del-custom", el).forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tr = btn.closest("tr");
+      const name = tr.dataset.item;
+      stocktakeExtraItems = stocktakeExtraItems.filter((r) => r.itemName !== name);
+      renderStockTakeTable(opKitchenId);
     });
   });
 }
@@ -1780,9 +1886,9 @@ async function loadReport() {
     <div class="stat-card"><div class="label">Lợi nhuận ước tính</div><div class="value">${fmt(loiNhuan)}</div></div>
   `;
   if (coBOM) {
-    sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Giá vốn NL ước tính = ${fmt(giaVonPerPhan)}/phần × số lượng bán, theo định mức đặt ở mục Quản lý — áp dụng được cho cả từng điểm bán.</p>`);
+    sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Giá vốn NL ước tính = ${fmt(giaVonPerPhan)}/phần × số lượng bán, theo định mức nguyên liệu đã đặt — áp dụng được cho cả từng điểm bán.</p>`);
   } else if (selectedIsPoint) {
-    sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Chi phí nguyên liệu phát sinh chung ở bếp trung tâm nên không chia theo từng điểm bán — xem ở lựa chọn "Tất cả điểm" hoặc điểm bếp. (Đặt định mức nguyên liệu/phần ở mục Quản lý để tự động phân bổ theo điểm.)</p>`);
+    sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Chi phí nguyên liệu phát sinh chung ở bếp trung tâm nên không chia theo từng điểm bán — xem ở lựa chọn "Tất cả điểm" hoặc điểm bếp.</p>`);
   }
 
   renderByLocationTable(allWorked, reportIngCache, locFilter, giaVonPerPhan);
@@ -1877,7 +1983,7 @@ function renderByLocationTable(allWorked, allIng, locFilter, giaVonPerPhan = 0) 
         }).join("")}
       </tbody>
     </table>
-    <p class="hint-text">Chi phí nguyên liệu thực nhập toàn hệ thống (bếp trung tâm): <b>${fmt(chiPhiNLTong)}</b>${coBOM ? " — dùng để đối chiếu với giá vốn ước tính theo định mức ở bảng trên." : " — chưa phân bổ vào từng điểm ở bảng trên (đặt định mức nguyên liệu/phần ở mục Quản lý để tự động phân bổ)."}</p>
+    <p class="hint-text">Chi phí nguyên liệu thực nhập toàn hệ thống (bếp trung tâm): <b>${fmt(chiPhiNLTong)}</b>${coBOM ? " — dùng để đối chiếu với giá vốn ước tính theo định mức ở bảng trên." : " — chưa phân bổ vào từng điểm ở bảng trên (chưa có định mức nguyên liệu/phần nào được đặt)."}</p>
   `;
 }
 
@@ -2020,6 +2126,7 @@ function exportCsv() {
 /* ===================== QUẢN LÝ (Điểm bán + Nhân viên) ===================== */
 async function renderQuanLy() {
   mount("quan-ly");
+  editingStaffUid = null;
 
   $("#form-location").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -2144,12 +2251,33 @@ async function renderQuanLy() {
   $("#form-staff").addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = $("#staff-name").value.trim();
-    const email = $("#staff-email").value.trim();
     const role = $("#staff-role").value;
     const staffLocationId = $("#staff-location").value;
     if (!staffLocationId) { toast("Chọn điểm bán cho nhân viên"); return; }
     const btn = e.submitter;
     btn.disabled = true;
+
+    if (editingStaffUid) {
+      // Sửa thông tin nhân viên có sẵn — không đụng tới email/mật khẩu đăng
+      // nhập (đổi email tài khoản người khác cần Admin SDK, app này không có).
+      try {
+        await updateDoc(doc(db, "users", editingStaffUid), {
+          name, role, locationId: staffLocationId, updatedAt: serverTimestamp(),
+        });
+        toast(`Đã cập nhật thông tin: ${name}`);
+        resetStaffForm();
+        await loadStaffDirectory();
+        renderStaffList();
+      } catch (err) {
+        console.error(err);
+        toast("Không cập nhật được: " + (err.message || ""));
+      } finally {
+        btn.disabled = false;
+      }
+      return;
+    }
+
+    const email = $("#staff-email").value.trim();
     try {
       // Không cần chủ quán gõ/lộ mật khẩu tạm: tự sinh 1 mật khẩu ngẫu nhiên
       // nội bộ chỉ để thoả điều kiện tạo tài khoản, rồi gửi ngay email đặt
@@ -2183,87 +2311,34 @@ async function renderQuanLy() {
       btn.disabled = false;
     }
   });
+  $("#btn-staff-cancel").addEventListener("click", () => resetStaffForm());
 
   populateStaffLocationSelect();
   renderLocationList();
   await loadStaffDirectory();
   renderStaffList();
-  await renderItemCatalogSection();
 }
 
-async function renderItemCatalogSection() {
-  const el = $('[data-bind="catalog-table"]');
-  const sumEl = $('[data-bind="catalog-cost-summary"]');
-  if (!el) return;
-  el.innerHTML = `<p class="empty-state">Đang tải…</p>`;
-  try {
-    const from = addDays(todayISO(), -STOCK_WINDOW_DAYS);
-    const ingRows = await fetchIngredientsByRange(from, todayISO());
-    const costMap = avgUnitCostMap(ingRows);
-    const names = new Set([...Object.keys(itemCatalog), ...Object.keys(costMap), ...ITEM_SUGGESTIONS]);
-    const rows = Array.from(names).filter(Boolean).sort((a, b) => a.localeCompare(b, "vi"));
-    if (!rows.length) { el.innerHTML = emptyState("Chưa có nguyên liệu nào"); if (sumEl) sumEl.textContent = ""; return; }
-
-    el.innerHTML = `
-      <table class="data-table">
-        <thead><tr><th>Nguyên liệu</th><th>Đơn vị</th><th>Giá TB/đvị</th><th>Định mức/phần</th><th>Ngưỡng cảnh báo</th><th></th></tr></thead>
-        <tbody>
-          ${rows.map((name) => {
-            const cat = itemCatalog[name] || {};
-            const cost = costMap[name];
-            const unit = cat.unit || (cost ? cost.unit : "") || "";
-            return `<tr data-item="${escapeHtml(name)}" data-unit="${escapeHtml(unit)}">
-              <td>${escapeHtml(name)}</td>
-              <td>${escapeHtml(unit)}</td>
-              <td>${cost && cost.avgCost ? fmt(cost.avgCost) : "—"}</td>
-              <td><input type="number" class="cat-qty" min="0" step="0.01" value="${cat.qtyPerPortion ?? ""}" style="width:78px" /></td>
-              <td><input type="number" class="cat-threshold" min="0" step="0.1" value="${cat.threshold ?? ""}" style="width:78px" /></td>
-              <td><button type="button" class="link-btn cat-save">Lưu</button></td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
-    `;
-
-    $$(".cat-save", el).forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const tr = btn.closest("tr");
-        const name = tr.dataset.item;
-        const unit = tr.dataset.unit || $(".cat-qty", tr).closest("tr").children[1].textContent.trim();
-        const qtyPerPortion = parseFloat($(".cat-qty", tr).value) || 0;
-        const threshold = parseFloat($(".cat-threshold", tr).value) || 0;
-        const existingId = itemCatalog[name]?.id || slugifyItemName(name);
-        try {
-          await setDoc(doc(db, "itemCatalog", existingId), {
-            itemName: name, unit, qtyPerPortion, threshold, updatedAt: serverTimestamp(),
-          });
-          itemCatalog[name] = { id: existingId, itemName: name, unit, qtyPerPortion, threshold };
-          toast("Đã lưu định mức: " + name);
-          updateCatalogCostSummary(costMap);
-        } catch (err) { console.error(err); toast("Không lưu được: " + (err.message || "")); }
-      });
-    });
-
-    updateCatalogCostSummary(costMap);
-  } catch (err) {
-    console.error(err);
-    el.innerHTML = emptyState("Không tải được dữ liệu");
-  }
-
-  function updateCatalogCostSummary(costMap) {
-    if (!sumEl) return;
-    let total = 0, count = 0;
-    Object.entries(itemCatalog).forEach(([name, cat]) => {
-      if (!cat.qtyPerPortion) return;
-      const c = costMap[name];
-      total += (cat.qtyPerPortion || 0) * (c ? c.avgCost : 0);
-      count++;
-    });
-    sumEl.textContent = count
-      ? `Giá vốn nguyên liệu ước tính / phần xôi (theo ${count} định mức đã đặt): ${fmt(total)} — dùng để phân bổ chi phí NL theo điểm bán trong Báo cáo.`
-      : "Chưa đặt định mức nào — nhập số vào cột \"Định mức/phần\" rồi bấm Lưu để bắt đầu tính giá vốn.";
-  }
+function resetStaffForm() {
+  editingStaffUid = null;
+  const f = $("#form-staff");
+  if (!f) return;
+  f.reset();
+  $("#btn-staff-cancel").hidden = true;
+  $('[data-bind="staff-form-title"]').textContent = "Thêm nhân viên";
+  $('[data-bind="staff-submit-btn"]').textContent = "Tạo tài khoản";
+  $('[data-bind="staff-email-field"]').hidden = false;
+  $('[data-bind="staff-email-hint"]').hidden = false;
+  $("#staff-email").required = true;
 }
+
+// Lưu ý: màn hình chỉnh "Định mức nguyên liệu / phần & cảnh báo tồn kho" đã
+// được bỏ khỏi Quản lý theo yêu cầu chủ quán (đợt 6) — 2 tính năng phụ thuộc
+// (cảnh báo tồn kho thấp ở Kho, giá vốn NL theo định mức ở Báo cáo) vẫn hoạt
+// động bình thường dựa trên dữ liệu itemCatalog đã có sẵn (qtyPerPortion,
+// threshold), chỉ là không còn màn hình để thêm/sửa các giá trị đó nữa. Mục
+// phân loại "Sản xuất/Điểm bán" (sanXuat, diemBan) vẫn chỉnh được — xem
+// renderStockTakeTable() ở màn Kho.
 
 function resetLocationForm() {
   editingLocationId = null;
@@ -2321,12 +2396,33 @@ function renderStaffList() {
       </div>
       <div class="entry-meta"><span>${escapeHtml(u.email || "")}</span><span>${escapeHtml(locationName(u.locationId))}</span></div>
       <div class="entry-row-actions">
+        <button class="link-btn" data-staff-edit="${uid}">Sửa</button>
         ${u.email ? `<button class="link-btn" data-resend-reset="${uid}">Gửi lại email đổi mật khẩu</button>` : ""}
         ${uid !== currentUser.uid ? `<button class="link-btn" data-toggle-active="${uid}">${u.active === false ? "Kích hoạt lại" : "Vô hiệu hoá"}</button>` : ""}
+        ${uid !== currentUser.uid ? `<button class="link-btn danger" data-staff-del="${uid}">Xoá</button>` : ""}
       </div>
       ${uid === currentUser.uid ? `<div class="entry-note">Tài khoản của bạn</div>` : ""}
     </div>
   `).join("");
+
+  $$("[data-staff-edit]", el).forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const uid = btn.dataset.staffEdit;
+      const u = staffDirectory[uid];
+      if (!u) return;
+      editingStaffUid = uid;
+      $("#staff-name").value = u.name || "";
+      $("#staff-role").value = u.role === "admin" ? "admin" : "staff";
+      $("#staff-location").value = u.locationId || "";
+      $('[data-bind="staff-form-title"]').textContent = `Sửa thông tin: ${u.name || "(chưa đặt tên)"}`;
+      $('[data-bind="staff-submit-btn"]').textContent = "Cập nhật";
+      $('[data-bind="staff-email-field"]').hidden = true;
+      $('[data-bind="staff-email-hint"]').hidden = true;
+      $("#staff-email").required = false;
+      $("#btn-staff-cancel").hidden = false;
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  });
 
   $$("[data-resend-reset]", el).forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -2350,6 +2446,22 @@ function renderStaffList() {
         await loadStaffDirectory();
         renderStaffList();
       } catch (err) { console.error(err); toast("Không cập nhật được"); }
+    });
+  });
+
+  $$("[data-staff-del]", el).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const uid = btn.dataset.staffDel;
+      const u = staffDirectory[uid];
+      if (!confirm(`Xoá hồ sơ nhân viên "${u?.name || ""}"? Tài khoản đăng nhập cũ (email) vẫn tồn tại nhưng sẽ không vào được app nữa vì mất hồ sơ/gán điểm bán. Các phiếu chấm công/nhập kho cũ của nhân viên này vẫn được giữ nguyên. Không thể hoàn tác.`)) return;
+      try {
+        await deleteDoc(doc(db, "users", uid));
+        if (editingStaffUid === uid) resetStaffForm();
+        toast("Đã xoá hồ sơ nhân viên");
+        await loadStaffDirectory();
+        renderStaffList();
+        populateStaffLocationSelect();
+      } catch (err) { console.error(err); toast("Không xoá được: " + (err.message || "")); }
     });
   });
 }

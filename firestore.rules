@@ -76,10 +76,14 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Định mức nguyên liệu/phần (BOM) + ngưỡng cảnh báo tồn kho — chỉ chủ quán chỉnh
+    // Định mức nguyên liệu/phần (BOM), ngưỡng cảnh báo tồn kho, và phân loại
+    // "dùng cho sản xuất / dùng cho điểm bán" của từng nguyên liệu. Mục phân
+    // loại được chỉnh trực tiếp ở mục Kiểm kê kho (ai vào được Kho — cả bếp
+    // lẫn admin — cũng chỉnh được), nên mở quyền ghi cho mọi người đã đăng
+    // nhập, giống cách làm với ingredients/transfers.
     match /itemCatalog/{id} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow write: if isSignedIn();
     }
 
     // Yêu cầu/đặt hàng nguyên liệu từ điểm bán gửi bếp trung tâm. Điểm bán
