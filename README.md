@@ -5,11 +5,13 @@ công/lương theo từng điểm, nguyên liệu & tồn kho ở bếp, chuyể
 bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ thống.
 
 > **Đang nâng cấp từ bản cũ?** Bản này có thêm collection Firestore mới
-> (`itemCatalog`, `orders`) và cập nhật `firestore.rules`. Sau khi đưa code
-> mới lên, nhớ vào **Firebase Console → Firestore Database → Rules**, dán lại
-> toàn bộ nội dung file `firestore.rules` mới rồi bấm **Publish** — nếu quên
-> bước này, mục "Định mức nguyên liệu" ở Quản lý và mục "Đặt hàng nguyên
-> liệu" ở điểm bán sẽ báo lỗi khi lưu.
+> (`itemCatalog`, `orders`) và cập nhật `firestore.rules` (thêm quyền cho
+> chủ quán tạo phiếu chấm công hộ nhân viên). Sau khi đưa code mới lên, nhớ
+> vào **Firebase Console → Firestore Database → Rules**, dán lại toàn bộ nội
+> dung file `firestore.rules` mới rồi bấm **Publish** — nếu quên bước này,
+> mục "Định mức nguyên liệu" ở Quản lý, mục "Đặt hàng nguyên liệu" ở điểm
+> bán, và việc chủ quán tạo phiếu chấm công mới cho nhân viên khác sẽ báo
+> lỗi khi lưu.
 
 ## Mô hình dữ liệu
 
@@ -44,7 +46,9 @@ bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ
 - **Chủ quán (admin)**: thấy toàn bộ hệ thống — quản lý điểm bán/bếp, tạo tài
   khoản nhân viên và gán điểm, xem kho + chuyển hàng ở mọi bếp, ghi sổ Thu &
   chi (mục "Thu chi" trên thanh điều hướng), xem báo cáo toàn hệ thống hoặc
-  từng điểm.
+  từng điểm. Ở màn **Chấm công**, chủ quán có thêm ô chọn "Xem / sửa chấm
+  công của" để xem, sửa, xoá hoặc tạo mới phiếu chấm công **của bất kỳ nhân
+  viên nào**, không chỉ của chính mình.
 - **Nhân viên tại bếp trung tâm**: chấm công như bình thường, cộng thêm quyền
   nhập nguyên liệu, ghi nhận chuyển hàng cho các điểm bán, xem tồn kho.
 - **Nhân viên tại điểm bán**: chấm công (lương, số lượng bán, thưởng, ship,

@@ -665,6 +665,13 @@ async function renderAttendanceStatus(dateStr) {
 
 /* ===================== CHẤM CÔNG ===================== */
 let entryCacheForUser = [];
+// uid mà admin đang xem/sửa phiếu chấm công (mặc định là chính admin). Nhân
+// viên thường luôn quản lý phiếu của chính mình, không đổi được giá trị này.
+let entryTargetUid = null;
+
+function currentEntryLocationId() {
+  return staffDirectory[entryTargetUid]?.locationId ?? profile.locationId;
+}
 
 async function renderChamCong() {
   mount("cham-cong");
@@ -676,12 +683,50 @@ async function renderChamCong() {
     return;
   }
 
-  const locBadge = $('[data-bind="entry-location"]');
-  if (locBadge) locBadge.textContent = locationName(profile.locationId);
+  entryTargetUid = currentUser.uid;
+  const staffSelectWrap = $('[data-bind="entry-staff-select"]');
+  if (isAdmin() && staffSelectWrap) {
+    const staffList = Object.entries(staffDirectory)
+      .filter(([, u]) => u.active !== false && u.locationId)
+      .sort((a, b) => (a[1].name || "").localeCompare(b[1].name || "", "vi"));
+    if (staffList.length) {
+      const defaultUid = staffList.some(([uid]) => uid === currentUser.uid) ? currentUser.uid : staffList[0][0];
+      entryTargetUid = defaultUid;
+      staffSelectWrap.hidden = false;
+      staffSelectWrap.innerHTML = `<label class="field"><span>Xem / sửa chấm công của</span>
+        <select id="entry-staff-select">
+          ${staffList.map(([uid, u]) => `<option value="${uid}" ${uid === defaultUid ? "selected" : ""}>${escapeHtml(u.name || "(chưa đặt tên)")}${uid === currentUser.uid ? " (bạn)" : ""} · ${escapeHtml(locationName(u.locationId))}</option>`).join("")}
+        </select>
+      </label>`;
+      $("#entry-staff-select").addEventListener("change", async (e) => {
+        entryTargetUid = e.target.value;
+        resetEntryForm();
+        updateEntryLocationBadge();
+        await loadAndRenderEntryList();
+      });
+    } else {
+      staffSelectWrap.hidden = true;
+    }
+  } else if (staffSelectWrap) {
+    staffSelectWrap.hidden = true;
+  }
+
+  function updateEntryLocationBadge() {
+    const locBadge = $('[data-bind="entry-location"]');
+    if (!locBadge) return;
+    const locId = currentEntryLocationId();
+    if (isAdmin() && entryTargetUid !== currentUser.uid) {
+      const nm = staffDirectory[entryTargetUid]?.name || "Nhân viên";
+      locBadge.textContent = `${nm} · ${locationName(locId)}`;
+    } else {
+      locBadge.textContent = locationName(locId);
+    }
+  }
+  updateEntryLocationBadge();
 
   const dateEl = $("#entry-date");
   dateEl.value = todayISO();
-  $("#entry-luong").value = locationsDirectory[profile.locationId]?.luongMacDinh ?? settings.luongMacDinh ?? "";
+  $("#entry-luong").value = locationsDirectory[currentEntryLocationId()]?.luongMacDinh ?? settings.luongMacDinh ?? "";
 
   const offEl = $("#entry-off");
   const workFields = $("#entry-work-fields");
@@ -702,14 +747,17 @@ async function renderChamCong() {
   $("#form-entry").addEventListener("submit", async (e) => {
     e.preventDefault();
     const off = offEl.checked;
-    if (!profile.locationId) {
-      toast("Tài khoản của bạn chưa được gán điểm bán. Vào Quản lý > Nhân sự để gán điểm bán trước khi chấm công.");
+    const targetLocationId = currentEntryLocationId();
+    if (!targetLocationId) {
+      toast(entryTargetUid === currentUser.uid
+        ? "Tài khoản của bạn chưa được gán điểm bán. Vào Quản lý > Nhân sự để gán điểm bán trước khi chấm công."
+        : "Nhân viên này chưa được gán điểm bán.");
       return;
     }
     const payload = {
-      uid: currentUser.uid,
-      name: profile.name || "",
-      locationId: profile.locationId,
+      uid: entryTargetUid,
+      name: staffDirectory[entryTargetUid]?.name || (entryTargetUid === currentUser.uid ? (profile.name || "") : ""),
+      locationId: targetLocationId,
       date: dateEl.value,
       offDay: off,
       luong: off ? 0 : (parseFloat(luongEl.value) || 0),
@@ -746,7 +794,7 @@ function resetEntryForm() {
   if (!f) return;
   f.reset();
   $("#entry-date").value = todayISO();
-  $("#entry-luong").value = locationsDirectory[profile.locationId]?.luongMacDinh ?? settings.luongMacDinh ?? "";
+  $("#entry-luong").value = locationsDirectory[currentEntryLocationId()]?.luongMacDinh ?? settings.luongMacDinh ?? "";
   $("#btn-entry-cancel").hidden = true;
   $$("input", $("#entry-work-fields")).forEach((i) => (i.disabled = false));
 }
@@ -755,7 +803,7 @@ async function loadAndRenderEntryList() {
   const list = $('[data-bind="entry-list"]');
   list.innerHTML = `<p class="empty-state">Đang tải…</p>`;
   try {
-    entryCacheForUser = await fetchEntriesByUid(currentUser.uid);
+    entryCacheForUser = await fetchEntriesByUid(entryTargetUid || currentUser.uid);
     renderEntryListFiltered();
   } catch (err) {
     console.error(err);
