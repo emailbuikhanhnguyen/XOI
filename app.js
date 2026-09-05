@@ -1901,6 +1901,16 @@ async function renderBaoCao() {
   fromEl.value = wkStart;
   toEl.value = addDays(wkStart, 5);
 
+  settleFilter = "tatca";
+  $$('[data-settle-filter]').forEach((chip) => {
+    chip.classList.toggle("active", chip.dataset.settleFilter === "tatca");
+    chip.addEventListener("click", () => {
+      settleFilter = chip.dataset.settleFilter;
+      $$('[data-settle-filter]').forEach((c) => c.classList.toggle("active", c === chip));
+      renderSettlementList();
+    });
+  });
+
   const locSel = $("#report-location");
   locSel.innerHTML = `<option value="">Tất cả điểm</option>` + activeLocations()
     .map(([id, l]) => `<option value="${id}">${escapeHtml(l.name)}${l.type === "kitchen" ? " (bếp)" : ""}</option>`).join("");
@@ -1927,6 +1937,12 @@ async function renderBaoCao() {
 let reportEntriesCache = [];
 let reportIngCache = [];
 let reportThuChiCache = [];
+
+// Quyết toán theo tuần: lọc "Tất cả / Chưa thanh toán / Đã thanh toán" +
+// cache dữ liệu để đổi bộ lọc/tick thanh toán không phải gọi lại Firestore.
+let settleFilter = "tatca";
+let settleGroupsCache = {};
+let settleDocsCache = {};
 
 async function loadReport() {
   const from = $("#report-from").value, to = $("#report-to").value;
@@ -2128,6 +2144,10 @@ function renderDailyBarChart(worked, from, to) {
   document.getElementById("daily-chart-inner").innerHTML = chartInner;
 }
 
+// Tải dữ liệu quyết toán (tổng lương từng nhân viên/tuần + trạng thái đã
+// thanh toán) rồi cache lại — renderSettlementList() phía dưới lo phần sắp
+// xếp/lọc/vẽ, để đổi bộ lọc Tất cả/Chưa/Đã thanh toán không phải gọi lại
+// Firestore mỗi lần bấm.
 async function renderSettlements(entries) {
   const groups = {};
   entries.forEach((r) => {
@@ -2136,17 +2156,72 @@ async function renderSettlements(entries) {
     groups[key] = groups[key] || { uid: r.uid, name: r.name || staffName(r.uid), week: wk, total: 0 };
     groups[key].total += r.tong || 0;
   });
+  settleGroupsCache = groups;
   const keys = Object.keys(groups);
-  const el = $('[data-bind="report-settlements"]');
-  if (!keys.length) { el.innerHTML = emptyState("Không có tuần nào để quyết toán trong khoảng đã chọn"); return; }
 
   let settlementDocs = {};
-  try {
-    const results = await Promise.all(keys.map((k) => getDoc(doc(db, "settlements", k))));
-    results.forEach((snap, i) => { if (snap.exists()) settlementDocs[keys[i]] = snap.data(); });
-  } catch (err) { console.error(err); }
+  if (keys.length) {
+    try {
+      const results = await Promise.all(keys.map((k) => getDoc(doc(db, "settlements", k))));
+      results.forEach((snap, i) => { if (snap.exists()) settlementDocs[keys[i]] = snap.data(); });
+    } catch (err) { console.error(err); }
+  }
+  settleDocsCache = settlementDocs;
 
-  el.innerHTML = keys.sort().map((k) => {
+  renderSettlementList();
+}
+
+// Banner nhắc tổng số phiếu + tổng tiền còn chưa thanh toán — luôn tính trên
+// TOÀN BỘ phiếu đã tải (không theo bộ lọc đang xem), để dù đang lọc "Đã thanh
+// toán" cũng không quên mất còn ai chưa trả lương.
+function renderSettleSummary() {
+  const el = $('[data-bind="settle-summary"]');
+  if (!el) return;
+  const groups = settleGroupsCache, docs = settleDocsCache;
+  const unpaidKeys = Object.keys(groups).filter((k) => !docs[k]?.paid);
+  if (!unpaidKeys.length) { el.innerHTML = ""; return; }
+  const total = unpaidKeys.reduce((s, k) => s + groups[k].total + (docs[k]?.adjustment || 0), 0);
+  el.innerHTML = `
+    <div class="reminder-banner gold">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+      <span>Còn <b>${unpaidKeys.length}</b> phiếu chưa thanh toán, tổng <b>${fmt(total)}</b>.</span>
+    </div>`;
+}
+
+// Vẽ lại danh sách quyết toán từ dữ liệu đã cache (không gọi Firestore) —
+// dùng cho lần tải đầu và mỗi khi đổi bộ lọc/tick thanh toán. Sắp xếp: tuần
+// gần nhất trước, trong cùng tuần thì phiếu CHƯA thanh toán lên trước (dễ
+// thấy ai còn cần trả lương), rồi mới tới tên nhân viên.
+function renderSettlementList() {
+  const groups = settleGroupsCache, settlementDocs = settleDocsCache;
+  const el = $('[data-bind="report-settlements"]');
+  if (!el) return;
+  renderSettleSummary();
+
+  const keys = Object.keys(groups);
+  if (!keys.length) { el.innerHTML = emptyState("Không có tuần nào để quyết toán trong khoảng đã chọn"); return; }
+
+  keys.sort((a, b) => {
+    const ga = groups[a], gb = groups[b];
+    if (ga.week !== gb.week) return gb.week.localeCompare(ga.week);
+    const pa = settlementDocs[a]?.paid ? 1 : 0, pb = settlementDocs[b]?.paid ? 1 : 0;
+    if (pa !== pb) return pa - pb;
+    return ga.name.localeCompare(gb.name, "vi");
+  });
+
+  const visibleKeys = keys.filter((k) => {
+    const paid = !!settlementDocs[k]?.paid;
+    if (settleFilter === "chua") return !paid;
+    if (settleFilter === "da") return paid;
+    return true;
+  });
+
+  if (!visibleKeys.length) {
+    el.innerHTML = emptyState(settleFilter === "chua" ? "Không còn phiếu nào chưa thanh toán 🎉" : "Không có phiếu nào khớp bộ lọc đang chọn");
+    return;
+  }
+
+  el.innerHTML = visibleKeys.map((k) => {
     const g = groups[k];
     const s = settlementDocs[k] || { paid: false, adjustment: 0, note: "" };
     const weekEnd = addDays(g.week, 5);
@@ -2183,11 +2258,8 @@ async function renderSettlements(entries) {
           adjustment: adj, note, paid, updatedAt: serverTimestamp(),
         }, { merge: true });
         toast("Đã lưu quyết toán");
-        $(".badge-paid, .badge-unpaid", card)?.remove();
-        const badge = document.createElement("span");
-        badge.className = paid ? "badge-paid" : "badge-unpaid";
-        badge.textContent = paid ? "Đã thanh toán" : "Chưa thanh toán";
-        $(".settlement-top", card).appendChild(badge);
+        settleDocsCache[key] = { ...(settleDocsCache[key] || {}), adjustment: adj, note, paid };
+        renderSettlementList();
       } catch (err) { console.error(err); toast("Không lưu được quyết toán"); }
     };
     $(".settle-adj", card).addEventListener("change", () => {

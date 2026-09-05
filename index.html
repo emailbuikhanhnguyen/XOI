@@ -490,6 +490,13 @@
     <div class="ticket" data-bind="report-monthly-chart"></div>
 
     <h3 class="section-heading">Quyết toán theo tuần</h3>
+    <p class="hint-text">Mỗi phiếu là tổng lương 1 tuần của 1 nhân viên — tick "Đã thanh toán tuần này" sau khi trả lương. Chỉ hiện các tuần có phiếu chấm công trong khoảng ngày đang lọc phía trên; chọn khoảng ngày rộng hơn (vd "Tháng này") để xem nhiều tuần cùng lúc.</p>
+    <div class="chip-row" data-bind="settle-filter">
+      <button type="button" class="chip active" data-settle-filter="tatca">Tất cả</button>
+      <button type="button" class="chip" data-settle-filter="chua">Chưa thanh toán</button>
+      <button type="button" class="chip" data-settle-filter="da">Đã thanh toán</button>
+    </div>
+    <div data-bind="settle-summary"></div>
     <div class="stack" data-bind="report-settlements"></div>
 
     <div class="ticket-actions center report-no-print">

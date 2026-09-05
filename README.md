@@ -12,17 +12,24 @@ bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ
 > **Firebase Console → Firestore Database → Rules**, dán lại toàn bộ nội dung
 > file `firestore.rules` hiện tại rồi bấm **Publish** — nếu quên bước này,
 > nhân viên bếp (không phải chủ quán) sẽ không tick được ô phân loại Sản
-> xuất/Điểm bán ở mục Kiểm kê kho (báo lỗi khi lưu). **Từ bản đợt 7 tới đợt 8
+> xuất/Điểm bán ở mục Kiểm kê kho (báo lỗi khi lưu). **Từ bản đợt 7 tới đợt 9
 > (bản hiện tại) không đổi thêm `firestore.rules` nào cả** — chỉ cần đưa code
 > mới lên như bình thường.
 >
-> **Bản đợt 8 sửa 1 lỗi tồn kho quan trọng**: đơn vị (kg/lít/cái...) là ô gõ
-> tự do từ đợt 6, nên nếu có lần gõ hoa/thường khác nhau cho cùng 1 đơn vị
+> **Bản đợt 8 đã sửa 1 lỗi tồn kho quan trọng**: đơn vị (kg/lít/cái...) là ô
+> gõ tự do từ đợt 6, nên nếu có lần gõ hoa/thường khác nhau cho cùng 1 đơn vị
 > (vd "Lít" và "lít") thì trước đây hệ thống tính thành 2 dòng tồn kho khác
-> nhau — có thể làm tồn kho hiện ra số âm sai dù thực tế hàng vẫn đủ. Bản này
+> nhau — có thể làm tồn kho hiện ra số âm sai dù thực tế hàng vẫn đủ. Bản đó
 > tự động gộp lại đúng theo tên nguyên liệu + đơn vị (không phân biệt
-> hoa/thường, tự bỏ khoảng trắng thừa) mỗi khi tính tồn kho — **không cần sửa
-> tay dữ liệu cũ**, mở app lên là số liệu tự đúng lại ngay.
+> hoa/thường, tự bỏ khoảng trắng thừa) mỗi khi tính tồn kho — không cần sửa
+> tay dữ liệu cũ.
+>
+> **Bản đợt 9 cải thiện mục "Quyết toán theo tuần" ở Báo cáo** (đã có sẵn từ
+> đợt 2, mỗi phiếu = tổng lương 1 tuần của 1 nhân viên kèm tick "Đã thanh
+> toán") — thêm bộ lọc Tất cả/Chưa thanh toán/Đã thanh toán, sắp xếp tuần gần
+> nhất + chưa thanh toán lên trước, và 1 banner nhắc tổng số phiếu/tổng tiền
+> còn chưa trả. Không đổi cấu trúc dữ liệu `settlements`, không cần
+> `firestore.rules` mới.
 
 ## Mô hình dữ liệu
 
