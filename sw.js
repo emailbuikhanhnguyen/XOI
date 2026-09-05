@@ -2,7 +2,7 @@
 // điện thoại xoá cache cũ và tải bản mới nhất — nếu quên đổi số này,
 // người dùng có thể bị "kẹt" ở bản HTML/JS cũ (ví dụ: màn đăng nhập
 // không tự ẩn sau khi đăng nhập thành công) dù code nguồn đã sửa xong.
-const CACHE_NAME = "so-xoi-v7";
+const CACHE_NAME = "so-xoi-v8";
 const APP_SHELL = [
   "./",
   "./index.html",

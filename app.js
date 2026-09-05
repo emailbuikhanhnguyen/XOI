@@ -1056,6 +1056,48 @@ function itemDatalistHtml() {
   <datalist id="unit-suggestions">${UNIT_SUGGESTIONS.map((s) => `<option value="${escapeHtml(s)}"></option>`).join("")}</datalist>`;
 }
 
+// Tên các nguyên liệu chủ quán đã phân loại "dùng cho điểm bán" (itemCatalog.diemBan
+// === true) — dùng để giới hạn những gì nhân viên điểm bán thấy/gõ khi đặt hàng,
+// không lộ ra các nguyên liệu chỉ dùng cho sản xuất ở bếp.
+function posItemNames() {
+  return Object.values(itemCatalog)
+    .filter((c) => c.diemBan === true)
+    .map((c) => c.itemName)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "vi"));
+}
+
+// Datalist gợi ý riêng cho ô "Nguyên liệu / mặt hàng cần" ở form đặt hàng của điểm
+// bán: chỉ gợi ý nguyên liệu đã được phân loại "dùng cho điểm bán". Nếu chủ quán
+// chưa phân loại nguyên liệu nào (mới dùng tính năng lần đầu), tạm rơi về danh sách
+// gợi ý chung để form vẫn dùng được, tránh ô gợi ý trống trơn.
+function orderItemDatalistHtml() {
+  const names = posItemNames();
+  const list = names.length ? names : ITEM_SUGGESTIONS;
+  return `<datalist id="order-item-suggestions">${list.map((s) => `<option value="${escapeHtml(s)}"></option>`).join("")}</datalist>`;
+}
+
+// Danh sách (dạng chip, bấm để điền nhanh vào ô "Nguyên liệu / mặt hàng cần") các
+// nguyên liệu đã được phân loại "dùng cho điểm bán" — cho nhân viên điểm bán biết
+// chủ quán đã chuẩn bị/nhập kho những mặt hàng nào cho điểm bán, mà không lộ ra
+// nguyên liệu/tồn kho tổng của bếp (chỉ hiện tên, không hiện số lượng tồn).
+function renderPosItemList() {
+  const el = $('[data-bind="pos-item-list"]');
+  if (!el) return;
+  const names = posItemNames();
+  if (!names.length) {
+    el.innerHTML = emptyState("Chủ quán chưa phân loại nguyên liệu nào cho điểm bán (ở mục Kiểm kê kho bên bếp) — bạn vẫn có thể tự gõ tên nguyên liệu cần ở form bên dưới.");
+    return;
+  }
+  el.innerHTML = `<div class="chip-row">${names.map((n) => `<button type="button" class="chip" data-pos-item="${escapeHtml(n)}">${escapeHtml(n)}</button>`).join("")}</div>`;
+  $$("[data-pos-item]", el).forEach((btn) => {
+    btn.addEventListener("click", () => {
+      $("#order-item").value = btn.dataset.posItem;
+      $("#order-item").focus();
+    });
+  });
+}
+
 // Nguyên liệu này có thuộc nhóm đang lọc không? Chưa từng phân loại → mặc
 // định coi là "Sản xuất" (giữ đúng hành vi cũ, không mất khỏi màn hình mặc
 // định) và KHÔNG thuộc "Điểm bán" (phải tự đánh dấu). 1 nguyên liệu có thể
@@ -1090,6 +1132,9 @@ async function renderKho() {
       readonlyEl.innerHTML = emptyState("Bạn chưa được gán điểm bán.");
       return;
     }
+
+    viewRoot.insertAdjacentHTML("beforeend", orderItemDatalistHtml());
+    renderPosItemList();
 
     $("#order-date").value = todayISO();
     $("#form-order").addEventListener("submit", async (e) => {

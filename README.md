@@ -4,15 +4,17 @@ App web (PWA) quản lý quán xôi có **1 bếp trung tâm + nhiều điểm b
 công/lương theo từng điểm, nguyên liệu & tồn kho ở bếp, chuyển hàng ra điểm
 bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ thống.
 
-> **Đang nâng cấp từ bản cũ?** Bản này cập nhật `firestore.rules`: nới quyền
-> ghi `itemCatalog` (định mức/ngưỡng cảnh báo/phân loại nguyên liệu) từ
-> "chỉ chủ quán" thành "ai đã đăng nhập cũng ghi được", để nhân viên bếp tự
-> phân loại "Sản xuất/Điểm bán" ở mục Kiểm kê kho mà không cần quyền admin.
-> Sau khi đưa code mới lên, nhớ vào **Firebase Console → Firestore Database →
-> Rules**, dán lại toàn bộ nội dung file `firestore.rules` mới rồi bấm
-> **Publish** — nếu quên bước này, nhân viên bếp (không phải chủ quán) sẽ
-> không tick được ô phân loại Sản xuất/Điểm bán ở mục Kiểm kê kho (báo lỗi
-> khi lưu).
+> **Đang nâng cấp từ bản cũ hơn (trước đợt 6)?** Bản đợt 6 từng cập nhật
+> `firestore.rules`: nới quyền ghi `itemCatalog` (định mức/ngưỡng cảnh
+> báo/phân loại nguyên liệu) từ "chỉ chủ quán" thành "ai đã đăng nhập cũng ghi
+> được", để nhân viên bếp tự phân loại "Sản xuất/Điểm bán" ở mục Kiểm kê kho
+> mà không cần quyền admin. Nếu bạn chưa từng deploy bản đó, nhớ vào
+> **Firebase Console → Firestore Database → Rules**, dán lại toàn bộ nội dung
+> file `firestore.rules` hiện tại rồi bấm **Publish** — nếu quên bước này,
+> nhân viên bếp (không phải chủ quán) sẽ không tick được ô phân loại Sản
+> xuất/Điểm bán ở mục Kiểm kê kho (báo lỗi khi lưu). **Bản đợt 7 (bản hiện
+> tại) không đổi thêm `firestore.rules` nào cả** — chỉ cần đưa code mới lên
+> như bình thường.
 
 ## Mô hình dữ liệu
 
@@ -57,7 +59,10 @@ bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ
   lưu, và đánh dấu từng nguyên liệu dùng cho Sản xuất và/hoặc Điểm bán.
 - **Nhân viên tại điểm bán**: chấm công (lương, số lượng bán, thưởng, ship,
   xôi ế/dẹp — giống bảng cũ), xem (không sửa) danh sách hàng đã nhận từ bếp,
-  và tự gửi yêu cầu đặt hàng nguyên liệu cần cho bếp trung tâm.
+  và tự gửi yêu cầu đặt hàng nguyên liệu cần cho bếp trung tâm. Khi đặt hàng,
+  chỉ thấy/gợi ý các nguyên liệu chủ quán đã đánh dấu "dùng cho Điểm bán" ở
+  mục Kiểm kê kho bên bếp — không thấy được nguyên liệu/tồn kho tổng của bếp
+  trung tâm.
 
 ## Cấu trúc file
 
@@ -179,6 +184,15 @@ chính"** để dùng như một app thật.
   dùng ở điểm bán.
 - **Đơn vị nguyên liệu** (kg, gói, cái...) giờ là ô gõ tự do (có gợi ý), không
   còn giới hạn trong danh sách cố định — gõ đơn vị nào cũng được.
+- **Màn Kho của nhân viên điểm bán** giờ có thêm khối "Nguyên vật liệu dùng
+  cho điểm bán" (dạng chip, bấm vào để điền nhanh tên vào form đặt hàng) và ô
+  gợi ý ở "Nguyên liệu / mặt hàng cần" cũng chỉ lấy từ đúng danh sách này —
+  lấy theo nguyên liệu đã được tick "Dùng cho ĐB" ở mục Kiểm kê kho bên bếp.
+  Nếu chủ quán/bếp chưa tick phân loại "Điểm bán" cho nguyên liệu nào, khối
+  này hiện thông báo nhắc, và ô gợi ý tạm rơi về danh sách gợi ý chung để
+  form vẫn dùng được (nhân viên vẫn tự gõ tên nguyên liệu cần bình thường).
+  Nhân viên điểm bán không thấy số lượng tồn kho của bếp, chỉ thấy tên nguyên
+  liệu để biết cái gì có thể đặt.
 - Mục **"Định mức nguyên liệu / phần"** ở Quản lý đã được gỡ bỏ theo yêu cầu
   (không còn màn hình để thêm/sửa định mức và ngưỡng cảnh báo tồn kho mới) —
   nhưng dữ liệu định mức/ngưỡng đã đặt từ trước vẫn được dùng bình thường cho

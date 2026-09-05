@@ -194,6 +194,9 @@
 <template id="tpl-kho">
   <section class="view">
     <div data-bind="kho-readonly" hidden>
+      <h3 class="section-heading">Nguyên vật liệu dùng cho điểm bán</h3>
+      <div class="stack" data-bind="pos-item-list"></div>
+
       <form id="form-order" class="ticket ticket-form">
         <p class="eyebrow">Đặt hàng nguyên liệu từ bếp</p>
         <div class="grid-2">
@@ -208,7 +211,7 @@
         </div>
         <label class="field">
           <span>Nguyên liệu / mặt hàng cần</span>
-          <input type="text" id="order-item" list="item-suggestions" placeholder="VD: Gạo nếp" required />
+          <input type="text" id="order-item" list="order-item-suggestions" placeholder="VD: Gạo nếp" required />
         </label>
         <label class="field">
           <span>Số lượng</span>
