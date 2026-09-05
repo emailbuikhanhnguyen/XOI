@@ -102,6 +102,14 @@ const viewRoot = $("#view-root");
 function fmt(n) { return Math.round(n || 0).toLocaleString("vi-VN") + "đ"; }
 function fmtNum(n) { return (n || 0).toLocaleString("vi-VN"); }
 
+// Chuẩn hoá đơn vị (kg/lít/cái...) để gộp tồn kho đúng: đơn vị giờ là ô gõ tự
+// do nên rất dễ gõ khác hoa/thường hoặc dư khoảng trắng (vd "Lít" và "lít")
+// — nếu không chuẩn hoá, 2 cách gõ này bị tính là 2 loại khác nhau, làm tồn
+// kho hiển thị sai (có dòng bị âm dù thực ra chỉ là gõ khác nhau). Áp dụng
+// khi LƯU (để dữ liệu mới nhất quán) và khi TÍNH TỒN (để tự gộp lại đúng cả
+// những bản ghi cũ đã lỡ gõ khác nhau, không cần sửa tay từng dòng).
+function normalizeUnit(u) { return (u || "").trim().toLowerCase(); }
+
 function isoLocal(d) {
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
@@ -1148,7 +1156,7 @@ async function renderKho() {
         locationId: profile.locationId,
         date: $("#order-date").value,
         itemName,
-        unit: $("#order-unit").value,
+        unit: normalizeUnit($("#order-unit").value),
         qty,
         ghiChu: $("#order-ghichu").value.trim(),
         status: "moi",
@@ -1215,7 +1223,7 @@ async function renderKho() {
   }
   $("#btn-stocktake-add")?.addEventListener("click", () => {
     const name = $("#stocktake-new-item").value.trim();
-    const unit = $("#stocktake-new-unit").value;
+    const unit = normalizeUnit($("#stocktake-new-unit").value);
     if (!name) { toast("Nhập tên nguyên liệu cần thêm"); return; }
     if (!stocktakeExtraItems.some((r) => r.itemName === name)) stocktakeExtraItems.push({ itemName: name, unit });
     $("#stocktake-new-item").value = "";
@@ -1245,7 +1253,7 @@ async function renderKho() {
       locationId: opKitchenId,
       date: $("#ing-date").value,
       itemName: $("#ing-item").value.trim(),
-      unit: $("#ing-unit").value,
+      unit: normalizeUnit($("#ing-unit").value),
       qty: parseFloat($("#ing-qty").value) || 0,
       tien: parseFloat($("#ing-tien").value) || 0,
       ghiChu: $("#ing-ghichu").value.trim(),
@@ -1275,7 +1283,7 @@ async function renderKho() {
       toLocationId: toId,
       date: $("#trf-date").value,
       itemName: $("#trf-item").value.trim(),
-      unit: $("#trf-unit").value,
+      unit: normalizeUnit($("#trf-unit").value),
       qty: parseFloat($("#trf-qty").value) || 0,
       ghiChu: $("#trf-ghichu").value.trim(),
       updatedAt: serverTimestamp(),
@@ -1388,13 +1396,15 @@ function renderStocktakeHistory() {
 function computeStockMap() {
   const stock = {};
   ingCacheGlobal.forEach((r) => {
-    const k = r.itemName + "||" + r.unit;
-    stock[k] = stock[k] || { itemName: r.itemName, unit: r.unit, ton: 0 };
+    const unit = normalizeUnit(r.unit);
+    const k = r.itemName + "||" + unit;
+    stock[k] = stock[k] || { itemName: r.itemName, unit, ton: 0 };
     stock[k].ton += r.qty || 0;
   });
   transferCacheGlobal.forEach((r) => {
-    const k = r.itemName + "||" + r.unit;
-    stock[k] = stock[k] || { itemName: r.itemName, unit: r.unit, ton: 0 };
+    const unit = normalizeUnit(r.unit);
+    const k = r.itemName + "||" + unit;
+    stock[k] = stock[k] || { itemName: r.itemName, unit, ton: 0 };
     stock[k].ton -= r.qty || 0;
   });
   return stock;
@@ -1418,15 +1428,24 @@ function renderStockTakeTable(opKitchenId) {
     ...ITEM_SUGGESTIONS,
     ...stocktakeExtraItems.map((r) => r.itemName),
   ]);
-  const rows = Array.from(names).filter(Boolean).filter(passesLoaiFilter).sort((a, b) => a.localeCompare(b, "vi")).map((name) => {
+  // Nguyên liệu đã bị "Xoá" khỏi danh sách (itemCatalog.an === true, vd gợi ý
+  // mặc định không dùng tới) thì ẩn đi — TRỪ KHI nó đang có tồn/lịch sử thật
+  // (stockByName[name] tồn tại), để không lỡ tay giấu mất dữ liệu thật.
+  const isHidden = (name) => itemCatalog[name]?.an === true && !stockByName[name];
+  const rows = Array.from(names).filter(Boolean).filter((n) => !isHidden(n)).filter(passesLoaiFilter).sort((a, b) => a.localeCompare(b, "vi")).map((name) => {
     const stockRow = stockByName[name];
     const extra = stocktakeExtraItems.find((r) => r.itemName === name);
     const unit = stockRow?.unit || itemCatalog[name]?.unit || extra?.unit || "kg";
     const computed = stockRow?.ton || 0;
     const cat = itemCatalog[name];
     const isCustom = !!extra;
+    // Chưa có tồn/lịch sử thật (chưa từng nhập/chuyển) → cho Xoá hẳn khỏi danh
+    // sách (vd nguyên liệu gợi ý mặc định nhưng quán không dùng tới, như "Đậu
+    // xanh"); có lịch sử thật rồi thì không cho xoá qua đây, tránh nhầm tưởng
+    // là xoá được dữ liệu tồn kho.
+    const noHistory = !stockRow;
     return {
-      itemName: name, unit, computed, isCustom,
+      itemName: name, unit, computed, isCustom, noHistory,
       sanXuat: cat?.sanXuat !== false,
       diemBan: cat?.diemBan === true,
     };
@@ -1452,7 +1471,9 @@ function renderStockTakeTable(opKitchenId) {
             <td><input type="number" class="stk-gia" min="0" step="1000" placeholder="đ" style="width:70px" /></td>
             <td class="entry-row-actions" style="flex-wrap:nowrap;">
               <button type="button" class="link-btn stk-save">Lưu</button>
-              ${r.isCustom ? `<button type="button" class="link-btn stk-edit-custom">Sửa</button><button type="button" class="link-btn danger stk-del-custom">Xoá</button>` : ""}
+              ${r.isCustom
+                ? `<button type="button" class="link-btn stk-edit-custom">Sửa</button><button type="button" class="link-btn danger stk-del-custom">Xoá</button>`
+                : (r.noHistory ? `<button type="button" class="link-btn danger stk-del-suggestion">Xoá</button>` : "")}
             </td>
           </tr>
         `).join("")}
@@ -1537,6 +1558,35 @@ function renderStockTakeTable(opKitchenId) {
       const name = tr.dataset.item;
       stocktakeExtraItems = stocktakeExtraItems.filter((r) => r.itemName !== name);
       renderStockTakeTable(opKitchenId);
+    });
+  });
+
+  // Xoá 1 nguyên liệu chưa từng có lịch sử (gợi ý mặc định không dùng tới,
+  // hoặc nguyên liệu tự thêm/phân loại trước đây nhưng quán không dùng nữa)
+  // khỏi danh sách Kiểm kê kho + Tồn kho hiện tại. Không xoá dữ liệu gì cả —
+  // chỉ đánh dấu itemCatalog.an = true để lần sau ẩn đi; nếu sau này lại có
+  // nhập/chuyển hàng thật cho nguyên liệu này thì nó tự hiện lại bình thường.
+  $$(".stk-del-suggestion", el).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const tr = btn.closest("tr");
+      const name = tr.dataset.item;
+      const unit = tr.dataset.unit;
+      if (!confirm(`Xoá "${name}" khỏi danh sách Kiểm kê kho / Tồn kho hiện tại? Nguyên liệu này chưa có lịch sử nhập/chuyển hàng nên xoá không mất dữ liệu gì — nếu sau này nhập/chuyển hàng lại đúng tên này, nó sẽ tự hiện lại.`)) return;
+      btn.disabled = true;
+      try {
+        const existingId = itemCatalog[name]?.id || slugifyItemName(name);
+        await setDoc(doc(db, "itemCatalog", existingId), {
+          itemName: name, unit, an: true, updatedAt: serverTimestamp(),
+        }, { merge: true });
+        itemCatalog[name] = { ...(itemCatalog[name] || {}), id: existingId, itemName: name, unit, an: true };
+        toast(`Đã xoá "${name}" khỏi danh sách`);
+        renderStockTakeTable(opKitchenId);
+        renderStockTableUI();
+      } catch (err) {
+        console.error(err);
+        toast("Không xoá được: " + (err.message || ""));
+        btn.disabled = false;
+      }
     });
   });
 }

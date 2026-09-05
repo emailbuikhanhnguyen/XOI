@@ -12,9 +12,17 @@ bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ
 > **Firebase Console → Firestore Database → Rules**, dán lại toàn bộ nội dung
 > file `firestore.rules` hiện tại rồi bấm **Publish** — nếu quên bước này,
 > nhân viên bếp (không phải chủ quán) sẽ không tick được ô phân loại Sản
-> xuất/Điểm bán ở mục Kiểm kê kho (báo lỗi khi lưu). **Bản đợt 7 (bản hiện
-> tại) không đổi thêm `firestore.rules` nào cả** — chỉ cần đưa code mới lên
-> như bình thường.
+> xuất/Điểm bán ở mục Kiểm kê kho (báo lỗi khi lưu). **Từ bản đợt 7 tới đợt 8
+> (bản hiện tại) không đổi thêm `firestore.rules` nào cả** — chỉ cần đưa code
+> mới lên như bình thường.
+>
+> **Bản đợt 8 sửa 1 lỗi tồn kho quan trọng**: đơn vị (kg/lít/cái...) là ô gõ
+> tự do từ đợt 6, nên nếu có lần gõ hoa/thường khác nhau cho cùng 1 đơn vị
+> (vd "Lít" và "lít") thì trước đây hệ thống tính thành 2 dòng tồn kho khác
+> nhau — có thể làm tồn kho hiện ra số âm sai dù thực tế hàng vẫn đủ. Bản này
+> tự động gộp lại đúng theo tên nguyên liệu + đơn vị (không phân biệt
+> hoa/thường, tự bỏ khoảng trắng thừa) mỗi khi tính tồn kho — **không cần sửa
+> tay dữ liệu cũ**, mở app lên là số liệu tự đúng lại ngay.
 
 ## Mô hình dữ liệu
 
@@ -183,7 +191,20 @@ chính"** để dùng như một app thật.
   mất khỏi màn hình mặc định), phải tự tick "ĐB" cho nguyên liệu nào cũng
   dùng ở điểm bán.
 - **Đơn vị nguyên liệu** (kg, gói, cái...) giờ là ô gõ tự do (có gợi ý), không
-  còn giới hạn trong danh sách cố định — gõ đơn vị nào cũng được.
+  còn giới hạn trong danh sách cố định — gõ đơn vị nào cũng được. **Từ đợt 8**,
+  hệ thống tự chuẩn hoá đơn vị (bỏ khoảng trắng thừa, không phân biệt
+  hoa/thường) mỗi khi tính tồn kho, để tránh trường hợp gõ "Lít" 1 lần rồi
+  "lít" lần khác bị tính thành 2 loại tồn kho riêng (gây ra số âm sai dù hàng
+  vẫn đủ) — không cần sửa lại các bản ghi cũ, chỉ cần vào lại app là số liệu
+  tự đúng.
+- **Xoá nguyên liệu chưa dùng khỏi Kiểm kê kho / Tồn kho hiện tại** (mới đợt
+  8): với nguyên liệu chưa từng có lần nhập/chuyển hàng nào (vd nằm trong gợi
+  ý mặc định nhưng quán không dùng, như "Đậu xanh"), bảng Kiểm kê kho giờ có
+  nút **Xoá** để ẩn hẳn nó khỏi cả 2 bảng — không mất dữ liệu gì (vì chưa có
+  dữ liệu thật để mất), và nếu sau này có nhập/chuyển hàng đúng tên nguyên
+  liệu đó thì nó tự hiện lại bình thường. Nguyên liệu **đã có** lịch sử nhập/
+  chuyển (có tồn kho thật) thì chưa hỗ trợ xoá qua nút này, để tránh nhầm lẫn
+  giữa "ẩn khỏi danh sách" và "xoá dữ liệu tồn kho thật".
 - **Màn Kho của nhân viên điểm bán** giờ có thêm khối "Nguyên vật liệu dùng
   cho điểm bán" (dạng chip, bấm vào để điền nhanh tên vào form đặt hàng) và ô
   gợi ý ở "Nguyên liệu / mặt hàng cần" cũng chỉ lấy từ đúng danh sách này —
