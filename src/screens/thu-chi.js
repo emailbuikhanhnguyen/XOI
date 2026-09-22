@@ -88,15 +88,21 @@ export async function renderThuChi() {
     const wasEditing = !!editingThuChiId;
     if (!wasEditing) payload.createdAt = serverTimestamp();
     const beforeTcRow = wasEditing ? thuChiCacheGlobal.find((r) => r.id === editingThuChiId) : null;
-    await saveOp(
-      () => (wasEditing ? updateDoc(doc(db, "thuchi", editingThuChiId), payload) : addDoc(collection(db, "thuchi"), payload)),
-      async (confirmed) => {
-        if (wasEditing) logChange("thuchi", editingThuChiId, "update", beforeTcRow, payload);
-        toast(wasEditing ? "Đã cập nhật giao dịch" : (confirmed ? "Đã lưu giao dịch" : "Đã lưu (chưa có mạng — sẽ tự đồng bộ)"));
-        resetThuChiForm();
-        await loadAndRenderThuChi();
-      }
-    );
+    const tcBtn = e.submitter;
+    if (tcBtn) tcBtn.disabled = true;
+    try {
+      await saveOp(
+        () => (wasEditing ? updateDoc(doc(db, "thuchi", editingThuChiId), payload) : addDoc(collection(db, "thuchi"), payload)),
+        async (confirmed) => {
+          if (wasEditing) logChange("thuchi", editingThuChiId, "update", beforeTcRow, payload);
+          toast(wasEditing ? "Đã cập nhật giao dịch" : (confirmed ? "Đã lưu giao dịch" : "Đã lưu (chưa có mạng — sẽ tự đồng bộ)"));
+          resetThuChiForm();
+          await loadAndRenderThuChi();
+        }
+      );
+    } finally {
+      if (tcBtn) tcBtn.disabled = false;
+    }
   });
 
   await loadAndRenderThuChi();

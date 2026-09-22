@@ -239,19 +239,26 @@ export async function renderKho() {
       updatedAt: serverTimestamp(),
     };
     if (!payload.itemName) { toast("Nhập tên nguyên liệu"); return; }
+    if (!(payload.qty > 0)) { toast("Nhập số lượng lớn hơn 0"); return; }
     payload.anhHoaDon = ingReceiptCtl ? ingReceiptCtl.get() : "";
     const wasEditing = !!editingIngId;
     if (!wasEditing) payload.createdAt = serverTimestamp();
     const beforeIngRow = wasEditing ? ingCacheGlobal.find((r) => r.id === editingIngId) : null;
-    await saveOp(
-      () => (wasEditing ? updateDoc(doc(db, "ingredients", editingIngId), payload) : addDoc(collection(db, "ingredients"), payload)),
-      async (confirmed) => {
-        if (wasEditing) logChange("ingredients", editingIngId, "update", beforeIngRow, payload);
-        toast(wasEditing ? "Đã cập nhật" : (confirmed ? "Đã lưu nguyên liệu" : "Đã lưu (chưa có mạng — sẽ tự đồng bộ)"));
-        resetIngForm();
-        await loadAndRenderKho(opKitchenId);
-      }
-    );
+    const ingBtn = e.submitter;
+    if (ingBtn) ingBtn.disabled = true;
+    try {
+      await saveOp(
+        () => (wasEditing ? updateDoc(doc(db, "ingredients", editingIngId), payload) : addDoc(collection(db, "ingredients"), payload)),
+        async (confirmed) => {
+          if (wasEditing) logChange("ingredients", editingIngId, "update", beforeIngRow, payload);
+          toast(wasEditing ? "Đã cập nhật" : (confirmed ? "Đã lưu nguyên liệu" : "Đã lưu (chưa có mạng — sẽ tự đồng bộ)"));
+          resetIngForm();
+          await loadAndRenderKho(opKitchenId);
+        }
+      );
+    } finally {
+      if (ingBtn) ingBtn.disabled = false;
+    }
   });
 
   $("#form-trf").addEventListener("submit", async (e) => {
@@ -275,18 +282,25 @@ export async function renderKho() {
       updatedAt: serverTimestamp(),
     };
     if (!payload.itemName) { toast("Nhập tên hàng chuyển"); return; }
+    if (!(payload.qty > 0)) { toast("Nhập số lượng lớn hơn 0"); return; }
     const wasEditing = !!editingTransferId;
     if (!wasEditing) payload.createdAt = serverTimestamp();
     const beforeTrfRow = wasEditing ? transferCacheGlobal.find((r) => r.id === editingTransferId) : null;
-    await saveOp(
-      () => (wasEditing ? updateDoc(doc(db, "transfers", editingTransferId), payload) : addDoc(collection(db, "transfers"), payload)),
-      async (confirmed) => {
-        if (wasEditing) logChange("transfers", editingTransferId, "update", beforeTrfRow, payload);
-        toast(wasEditing ? "Đã cập nhật" : (confirmed ? "Đã ghi nhận chuyển hàng" : "Đã ghi nhận (chưa có mạng — sẽ tự đồng bộ)"));
-        resetTrfForm();
-        await loadAndRenderKho(opKitchenId);
-      }
-    );
+    const trfBtn = e.submitter;
+    if (trfBtn) trfBtn.disabled = true;
+    try {
+      await saveOp(
+        () => (wasEditing ? updateDoc(doc(db, "transfers", editingTransferId), payload) : addDoc(collection(db, "transfers"), payload)),
+        async (confirmed) => {
+          if (wasEditing) logChange("transfers", editingTransferId, "update", beforeTrfRow, payload);
+          toast(wasEditing ? "Đã cập nhật" : (confirmed ? "Đã ghi nhận chuyển hàng" : "Đã ghi nhận (chưa có mạng — sẽ tự đồng bộ)"));
+          resetTrfForm();
+          await loadAndRenderKho(opKitchenId);
+        }
+      );
+    } finally {
+      if (trfBtn) trfBtn.disabled = false;
+    }
   });
 
   await Promise.all([loadAndRenderKho(opKitchenId), loadAndRenderOrderRequests()]);
@@ -359,14 +373,25 @@ function renderStockTableUI() {
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
       <span>Sắp hết ${lowRows.length} nguyên liệu: ${lowRows.map((r) => escapeHtml(r.itemName)).join(", ")}.</span>
     </div>` : "";
+  // Tồn ÂM nghĩa là số đã chuyển đi nhiều hơn số đã nhập — luôn là dấu hiệu
+  // nhập liệu bị sai/thiếu ở đâu đó (không phải chuyện bình thường như "sắp
+  // hết"), nên cảnh báo riêng, tách biệt khỏi banner "sắp hết" ở trên.
+  const negativeRows = rows.filter((r) => r.ton < 0);
+  const negativeBannerHtml = negativeRows.length ? `
+    <div class="reminder-banner">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+      <span>Tồn kho ÂM ở ${negativeRows.length} nguyên liệu (chuyển đi nhiều hơn đã nhập — có thể do nhập/chuyển hàng bị sai hoặc thiếu, nên kiểm tra lại lịch sử): ${negativeRows.map((r) => escapeHtml(r.itemName)).join(", ")}.</span>
+    </div>` : "";
   stockEl.innerHTML = rows.length ? `
+    ${negativeBannerHtml}
     ${lowBannerHtml}
     <table class="data-table">
       <thead><tr><th>Nguyên liệu</th><th>Đơn vị</th><th>Tồn hiện tại</th></tr></thead>
       <tbody>${rows.map((r) => {
         const th = state.itemCatalog[r.itemName]?.threshold;
         const isLow = th && r.ton < th;
-        return `<tr class="${isLow ? "stock-row-low" : ""}"><td>${escapeHtml(r.itemName)}</td><td>${escapeHtml(r.unit)}</td><td><b>${fmtNum(r.ton)}</b>${isLow ? ` <span class="badge-warn">Sắp hết</span>` : ""}</td></tr>`;
+        const isNegative = r.ton < 0;
+        return `<tr class="${isNegative ? "stock-row-negative" : (isLow ? "stock-row-low" : "")}"><td>${escapeHtml(r.itemName)}</td><td>${escapeHtml(r.unit)}</td><td><b>${fmtNum(r.ton)}</b>${isNegative ? ` <span class="badge-warn">Tồn âm</span>` : (isLow ? ` <span class="badge-warn">Sắp hết</span>` : "")}</td></tr>`;
       }).join("")}</tbody>
     </table>
     <p class="hint-text">Tồn kho tính trong ${STOCK_WINDOW_DAYS} ngày gần nhất (nhập − đã chuyển đi).</p>

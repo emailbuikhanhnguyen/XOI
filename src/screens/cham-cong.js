@@ -123,6 +123,14 @@ export async function renderChamCong() {
       updatedAt: serverTimestamp(),
     };
     const wasEditing = !!editingEntryId;
+    // Mỗi nhân viên chỉ nên có 1 phiếu/ngày — chặn tạo phiếu MỚI (không áp
+    // dụng khi đang Sửa) trùng ngày với 1 phiếu đã có, để tránh bấm nhầm/bấm
+    // đúp ra 2 phiếu cùng ngày, làm doanh thu + lương bị cộng đôi mà không
+    // ai để ý. Nếu thật sự cần sửa số liệu ngày đó, bấm "Sửa" ở phiếu cũ.
+    if (!wasEditing && entryCacheForUser.some((r) => r.date === dateEl.value)) {
+      toast(`Đã có phiếu chấm công ngày ${formatDateVN(dateEl.value)} rồi — bấm "Sửa" ở phiếu đó thay vì tạo phiếu mới.`);
+      return;
+    }
     if (!wasEditing) {
       payload.createdAt = serverTimestamp();
       // Chụp lại giá bán của điểm bán NGAY LÚC TẠO phiếu — chỉ đặt 1 lần khi
@@ -132,15 +140,21 @@ export async function renderChamCong() {
       payload.giaBanTaiThoiDiem = locationGiaBan(targetLocationId);
     }
     const beforeEntryRow = wasEditing ? entryCacheForUser.find((r) => r.id === editingEntryId) : null;
-    await saveOp(
-      () => (wasEditing ? updateDoc(doc(db, "entries", editingEntryId), payload) : addDoc(collection(db, "entries"), payload)),
-      async (confirmed) => {
-        if (wasEditing) logChange("entries", editingEntryId, "update", beforeEntryRow, payload);
-        toast(wasEditing ? "Đã cập nhật phiếu chấm công" : (confirmed ? "Đã lưu phiếu chấm công" : "Đã lưu phiếu (chưa có mạng — sẽ tự đồng bộ)"));
-        resetEntryForm();
-        await loadAndRenderEntryList();
-      }
-    );
+    const entryBtn = e.submitter;
+    if (entryBtn) entryBtn.disabled = true;
+    try {
+      await saveOp(
+        () => (wasEditing ? updateDoc(doc(db, "entries", editingEntryId), payload) : addDoc(collection(db, "entries"), payload)),
+        async (confirmed) => {
+          if (wasEditing) logChange("entries", editingEntryId, "update", beforeEntryRow, payload);
+          toast(wasEditing ? "Đã cập nhật phiếu chấm công" : (confirmed ? "Đã lưu phiếu chấm công" : "Đã lưu phiếu (chưa có mạng — sẽ tự đồng bộ)"));
+          resetEntryForm();
+          await loadAndRenderEntryList();
+        }
+      );
+    } finally {
+      if (entryBtn) entryBtn.disabled = false;
+    }
   });
 
   $("#entry-filter").addEventListener("change", () => { entryListLimit = 30; renderEntryListFiltered(); });
