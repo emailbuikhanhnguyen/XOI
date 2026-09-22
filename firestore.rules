@@ -1,0 +1,121 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        myProfile().role == 'admin';
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Điểm/bếp mà người dùng hiện tại được gán (locationId trong hồ sơ).
+    function myLocationType() {
+      return get(/databases/$(database)/documents/locations/$(myProfile().locationId)).data.type;
+    }
+
+    // Chủ quán, hoặc nhân viên được gán vào 1 bếp trung tâm (type: 'kitchen').
+    // Dùng cho các dữ liệu vốn chỉ nên do phía bếp/chủ quán chỉnh (định mức
+    // nguyên liệu, xử lý đơn đặt hàng...) — để phân biệt với nhân viên điểm
+    // bán, vốn cũng "đã đăng nhập" nhưng không nên sửa được các dữ liệu này.
+    function isKitchenOrAdmin() {
+      return isAdmin() ||
+        (isSignedIn() &&
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          myProfile().locationId != null &&
+          myLocationType() == 'kitchen');
+    }
+
+    // Điểm bán / bếp trung tâm — chỉ chủ quán được thêm/sửa/xoá
+    match /locations/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Hồ sơ người dùng (tên, vai trò, điểm bán được gán)
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() || isOwner(uid);
+      allow update: if isAdmin() || isOwner(uid);
+      allow delete: if isAdmin();
+    }
+
+    // Chấm công hàng ngày (gắn theo điểm bán). Nhân viên chỉ tạo/sửa/xoá
+    // phiếu của chính mình; chủ quán được tạo/sửa/xoá phiếu của bất kỳ nhân
+    // viên nào (vd. chấm công hộ, sửa số liệu nhập nhầm, xoá phiếu trùng).
+    match /entries/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (request.resource.data.uid == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // Nhập nguyên liệu vào kho (thường là bếp trung tâm)
+    match /ingredients/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // Chuyển hàng từ bếp trung tâm ra điểm bán
+    match /transfers/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // Thu & chi khác ngoài lương/nguyên liệu (mặt bằng, điện nước, sửa chữa...) — chỉ chủ quán quản lý
+    match /thuchi/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Quyết toán lương theo tuần (chỉ chủ quán chỉnh)
+    match /settlements/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Cài đặt chung / dự phòng (giá bán, lương mặc định...)
+    match /settings/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Định mức nguyên liệu/phần (BOM), ngưỡng cảnh báo tồn kho, và phân loại
+    // "dùng cho sản xuất / dùng cho điểm bán" của từng nguyên liệu. Mục phân
+    // loại được chỉnh trực tiếp ở mục Kiểm kê kho (ai vào được Kho — cả bếp
+    // lẫn admin — cũng chỉnh được). Trước đây mở quyền ghi cho MỌI người đã
+    // đăng nhập, kể cả nhân viên điểm bán (không vào được Kho trên giao diện
+    // nhưng vẫn có thể gọi thẳng API để sửa); giờ giới hạn lại đúng theo ai
+    // thật sự vào được mục Kiểm kê kho: chủ quán hoặc nhân viên bếp.
+    match /itemCatalog/{id} {
+      allow read: if isSignedIn();
+      allow write: if isKitchenOrAdmin();
+    }
+
+    // Yêu cầu/đặt hàng nguyên liệu từ điểm bán gửi bếp trung tâm. Điểm bán
+    // tạo đơn của mình. Cập nhật trạng thái (đánh dấu "Đã chuyển"/"Huỷ") chỉ
+    // dành cho: chủ quán/nhân viên bếp (xử lý đơn của bất kỳ điểm nào), hoặc
+    // chính điểm bán đã tạo đơn đó (để tự huỷ đơn đặt nhầm) — trước đây bất
+    // kỳ ai đã đăng nhập cũng cập nhật được đơn của điểm khác. Xoá vẫn chỉ
+    // dành cho chủ quán hoặc người tạo.
+    match /orders/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isKitchenOrAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+    }
+  }
+}

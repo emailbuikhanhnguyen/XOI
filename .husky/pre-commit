@@ -1,0 +1,2 @@
+npm run build:sw-version
+git add sw.js

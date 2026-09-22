@@ -1,0 +1,332 @@
+# 🌿 Sổ Xôi — Bếp trung tâm · Điểm bán · Lương · Nguyên liệu · Doanh thu
+
+App web (PWA) quản lý quán xôi có **1 bếp trung tâm + nhiều điểm bán**: chấm
+công/lương theo từng điểm, nguyên liệu & tồn kho ở bếp, chuyển hàng ra điểm
+bán, và báo cáo doanh thu/lợi nhuận theo từng điểm lẫn toàn hệ thống.
+
+> **Đang nâng cấp từ bản cũ hơn (trước đợt 6)?** Bản đợt 6 từng cập nhật
+> `firestore.rules`: nới quyền ghi `itemCatalog` (định mức/ngưỡng cảnh
+> báo/phân loại nguyên liệu) từ "chỉ chủ quán" thành "ai đã đăng nhập cũng ghi
+> được", để nhân viên bếp tự phân loại "Sản xuất/Điểm bán" ở mục Kiểm kê kho
+> mà không cần quyền admin. Nếu bạn chưa từng deploy bản đó, nhớ vào
+> **Firebase Console → Firestore Database → Rules**, dán lại toàn bộ nội dung
+> file `firestore.rules` hiện tại rồi bấm **Publish** — nếu quên bước này,
+> nhân viên bếp (không phải chủ quán) sẽ không tick được ô phân loại Sản
+> xuất/Điểm bán ở mục Kiểm kê kho (báo lỗi khi lưu). **Từ bản đợt 7 tới đợt 9
+> (bản hiện tại) không đổi thêm `firestore.rules` nào cả** — chỉ cần đưa code
+> mới lên như bình thường.
+>
+> **Bản đợt 8 đã sửa 1 lỗi tồn kho quan trọng**: đơn vị (kg/lít/cái...) là ô
+> gõ tự do từ đợt 6, nên nếu có lần gõ hoa/thường khác nhau cho cùng 1 đơn vị
+> (vd "Lít" và "lít") thì trước đây hệ thống tính thành 2 dòng tồn kho khác
+> nhau — có thể làm tồn kho hiện ra số âm sai dù thực tế hàng vẫn đủ. Bản đó
+> tự động gộp lại đúng theo tên nguyên liệu + đơn vị (không phân biệt
+> hoa/thường, tự bỏ khoảng trắng thừa) mỗi khi tính tồn kho — không cần sửa
+> tay dữ liệu cũ.
+>
+> **Bản đợt 9 cải thiện mục "Quyết toán theo tuần" ở Báo cáo** (đã có sẵn từ
+> đợt 2, mỗi phiếu = tổng lương 1 tuần của 1 nhân viên kèm tick "Đã thanh
+> toán") — thêm bộ lọc Tất cả/Chưa thanh toán/Đã thanh toán, sắp xếp tuần gần
+> nhất + chưa thanh toán lên trước, và 1 banner nhắc tổng số phiếu/tổng tiền
+> còn chưa trả. Không đổi cấu trúc dữ liệu `settlements`, không cần
+> `firestore.rules` mới.
+
+## Mô hình dữ liệu
+
+- **Locations** (`locations`): danh sách các điểm — 1 hoặc nhiều **Bếp trung
+  tâm** (`type: kitchen`) và nhiều **Điểm bán** (`type: point`). Mỗi điểm có
+  giá bán/phần và lương cơ bản mặc định riêng.
+- **Nhân viên**: mỗi tài khoản được **gán vào đúng 1 điểm** (`locationId`).
+  Chấm công/doanh thu của nhân viên luôn gắn với điểm đó.
+- **Nguyên liệu** (`ingredients`): ghi nhận nhập hàng vào bếp trung tâm (tên
+  nguyên liệu tự do, đơn vị, số lượng, thành tiền).
+- **Chuyển hàng** (`transfers`): bếp trung tâm ghi nhận xuất hàng cho từng
+  điểm bán theo ngày. Điểm bán chỉ xem được (không sửa) danh sách đã nhận.
+- **Đặt hàng nguyên liệu** (`orders`): điểm bán chủ động gửi yêu cầu nguyên
+  liệu cần (tên, số lượng, ngày cần, ghi chú) cho bếp trung tâm. Bếp/chủ quán
+  thấy danh sách yêu cầu đang chờ, có thể bấm "Điền vào form chuyển hàng" để
+  tạo phiếu chuyển hàng tương ứng rồi đánh dấu "Đã chuyển", hoặc điểm bán tự
+  huỷ đơn nếu đặt nhầm.
+- **Tồn kho bếp** = tổng đã nhập − tổng đã chuyển đi (tính trong 365 ngày gần
+  nhất), tính theo từng loại nguyên liệu.
+- **Thu & chi** (`thuchi`): sổ ghi các khoản thu/chi ngoài lương và nguyên
+  liệu (tiền mặt bằng, điện nước, sửa chữa, thu khác...), mỗi khoản có loại
+  (thu/chi), danh mục, số tiền, ngày, và có thể gắn với 1 điểm bán/bếp cụ thể
+  hoặc để "Chung (toàn quán)". Chỉ chủ quán mới thêm/sửa/xoá được.
+- **Báo cáo**: lọc theo khoảng ngày + theo điểm bán (hoặc "Tất cả điểm"), có
+  bảng so sánh từng điểm, bảng theo nhân viên, biểu đồ theo ngày, quyết toán
+  lương theo tuần, xuất CSV. Lợi nhuận ước tính đã cộng/trừ thêm **Thu khác /
+  Chi khác** lấy từ sổ Thu & chi trong cùng khoảng ngày (và cùng điểm bán nếu
+  có lọc).
+
+## Tính năng theo vai trò
+
+- **Chủ quán (admin)**: thấy toàn bộ hệ thống — quản lý điểm bán/bếp, tạo/sửa/
+  xoá tài khoản nhân viên (đổi tên, vai trò, điểm làm việc — không đổi được
+  email đăng nhập), xem kho + chuyển hàng ở mọi bếp, ghi sổ Thu & chi (mục
+  "Thu chi" trên thanh điều hướng), xem báo cáo toàn hệ thống hoặc từng điểm.
+  Ở màn **Chấm công**, chủ quán có thêm ô chọn "Xem / sửa chấm công của" để
+  xem, sửa, xoá hoặc tạo mới phiếu chấm công **của bất kỳ nhân viên nào**,
+  không chỉ của chính mình.
+- **Nhân viên tại bếp trung tâm**: chấm công như bình thường, cộng thêm quyền
+  nhập nguyên liệu, ghi nhận chuyển hàng cho các điểm bán, xem tồn kho, và
+  dùng mục **Kiểm kê kho** để nhập tồn thực tế, sửa/xoá các lần điều chỉnh đã
+  lưu, và đánh dấu từng nguyên liệu dùng cho Sản xuất và/hoặc Điểm bán.
+- **Nhân viên tại điểm bán**: chấm công (lương, số lượng bán, thưởng, ship,
+  xôi ế/dẹp — giống bảng cũ), xem (không sửa) danh sách hàng đã nhận từ bếp,
+  và tự gửi yêu cầu đặt hàng nguyên liệu cần cho bếp trung tâm. Khi đặt hàng,
+  chỉ thấy/gợi ý các nguyên liệu chủ quán đã đánh dấu "dùng cho Điểm bán" ở
+  mục Kiểm kê kho bên bếp — không thấy được nguyên liệu/tồn kho tổng của bếp
+  trung tâm.
+
+## Cấu trúc file
+
+```
+index.html              Khung giao diện + toàn bộ template các màn hình
+styles.css               Giao diện (tông màu lá chuối – xôi gấc – nghệ)
+app.js                    Điểm khởi động (composition root) — chỉ đăng ký service worker
+                          + import các module trong src/ (xem "Cấu trúc mã nguồn" bên dưới)
+firebase-config.js        Nơi bạn dán cấu hình project Firebase của mình
+firestore.rules           Luật bảo mật dữ liệu (deploy lên Firebase)
+manifest.webmanifest       Khai báo PWA
+sw.js                      Service worker (chạy offline phần giao diện)
+```
+
+### Cấu trúc mã nguồn (đã module hoá)
+
+Toàn bộ logic trước đây nằm chung trong 1 file `app.js` (~2600 dòng) nay được
+tách theo module ES (native, không cần bundler — trình duyệt tải trực tiếp
+qua `<script type="module">` và `import`), mỗi file lo đúng 1 việc:
+
+```
+src/
+  calc.js                Hàm tính toán/định dạng thuần (không đụng DOM/Firebase) — có unit test
+  constants.js            Hằng số dùng chung (gợi ý nguyên liệu/đơn vị, danh mục thu chi...)
+  firebase-init.js        Khởi tạo Firebase (app, auth, db) — dùng chung
+  state.js                State dùng chung nhiều màn hình (currentUser, profile, staffDirectory,
+                          locationsDirectory, settings, itemCatalog) + các hàm đọc suy ra từ đó
+                          (isAdmin, locationName...) — gom vào object `state` vì ES module gốc
+                          không cho import lại 1 biến `let` rời rạc từ module khác
+  ui.js                   Helper DOM dùng chung ($, $$, toast, reportError, emptyState, mount,
+                          xử lý ảnh hoá đơn...) + xử lý bấm mở to ảnh hoá đơn (dùng chung mọi màn hình)
+  network.js               Banner báo mất mạng / có mạng lại
+  data.js                  Tải dữ liệu dùng chung + các hàm fetch theo khoảng ngày (Firestore)
+  auth.js                  Đăng nhập / đăng xuất / quên mật khẩu / theo dõi trạng thái đăng nhập
+  router.js                Điều hướng theo hash (#/trang-chu, #/kho...) + menu điều hướng
+  screens/
+    trang-chu.js            Màn Trang chủ (tổng quan, nhắc nhở, điểm danh)
+    cham-cong.js             Màn Chấm công (+ danh sách phiếu dùng chung với Trang chủ)
+    kho.js                   Màn Kho & Chuyển hàng (nhập/chuyển/kiểm kê/đặt hàng) — module lớn nhất
+    thu-chi.js               Màn Thu & chi
+    bao-cao.js               Màn Báo cáo (doanh thu, quyết toán lương, xuất CSV)
+    quan-ly.js               Màn Quản lý (điểm bán + nhân viên)
+```
+
+Mỗi file `screens/*.js` tự đăng ký sự kiện bấm sửa/xoá riêng của màn hình đó
+lên `viewRoot` (đăng ký 1 lần khi module được `import` lần đầu, không đăng ký
+lại mỗi lần vào màn hình — nhiều listener cùng gắn trên `viewRoot` không xung
+đột nhau, mỗi cái chỉ xử lý `data-*` của riêng mình). Các biến cache/id-đang-sửa
+chỉ dùng riêng trong 1 màn hình (vd `editingIngId`, `ingCacheGlobal`...) vẫn là
+biến `let` khai báo ngay trong file màn hình đó — chỉ những gì thực sự dùng
+chung nhiều màn hình mới nằm trong `state.js`.
+
+**Lưu ý khi sửa code:** nếu bạn thêm file `.js` mới trong `src/`, nhớ thêm
+đường dẫn file đó vào cả `sw.js` (mảng `APP_SHELL`) lẫn
+`scripts/gen-sw-version.js` (mảng `WATCHED_FILES`) — nếu không, service
+worker sẽ không precache file mới / không tự đổi version cache khi bạn sửa
+file đó.
+
+## Công cụ phát triển (dev tooling)
+
+Dự án không cần build step để CHẠY app (mở thẳng `index.html` hoặc host tĩnh
+là được, xem mục GitHub Pages bên dưới) — các công cụ dưới đây chỉ hỗ trợ
+lúc SỬA code, không bắt buộc để deploy.
+
+Cần cài [Node.js](https://nodejs.org) (bản LTS) 1 lần, sau đó ở thư mục dự án:
+
+```bash
+npm install        # cài công cụ (chỉ cần làm 1 lần, hoặc khi package.json đổi)
+npm run lint        # kiểm tra lỗi code bằng ESLint
+npm run format       # tự động canh lại định dạng code bằng Prettier
+npm test              # chạy unit test (Vitest) cho src/calc.js
+npm run test:watch     # chạy test ở chế độ theo dõi, tự chạy lại khi sửa code
+```
+
+`node_modules/` (thư mục công cụ do `npm install` tạo ra) không commit lên
+Git — đã có trong `.gitignore` sẵn.
+
+### Version cache offline (`sw.js`) tự động, không cần tự tay đổi số
+
+`sw.js` cần 1 số phiên bản (`CACHE_NAME`) đổi mỗi khi code đổi, để điện
+thoại người dùng tự xoá cache cũ và tải bản mới (không thì có thể bị "kẹt"
+ở bản cũ dù bạn đã sửa code xong). Trước đây phải tự tay đổi số này — dễ
+quên. Giờ có `npm run build:sw-version`: tự tính 1 mã hash từ nội dung thật
+của `index.html`, `styles.css`, `app.js`, `src/calc.js`, `firebase-config.js`,
+`manifest.webmanifest` và chính `sw.js`, rồi tự ghi vào `CACHE_NAME` — nội
+dung không đổi thì không sửa gì, có đổi (dù chỉ 1 dòng) thì số version đổi
+theo, không cần nhớ gì cả.
+
+Lệnh này **tự chạy mỗi khi bạn `git commit`** (nhờ Git hook cài qua
+[Husky](https://typicode.github.io/husky/), thiết lập tự động khi bạn chạy
+`npm install`), rồi tự thêm `sw.js` đã cập nhật vào đúng commit đó — bạn
+không cần làm gì thêm, cứ sửa code, `git add`, `git commit` như bình thường
+là `sw.js` tự đúng. Chỉ cần lưu ý: **nếu máy bạn chưa có `git init`** lúc
+chạy `npm install` lần đầu, Git hook sẽ không cài được (npm không báo lỗi,
+chỉ âm thầm bỏ qua) — nếu vậy, sau khi `git init` xong (bước 5 bên dưới),
+chạy lại `npm install` 1 lần nữa để hook được cài đúng. Muốn chạy tay lúc
+nào đó (vd. muốn xem trước sẽ đổi thành số gì) thì dùng
+`npm run build:sw-version`.
+
+## 1. Tạo Firebase project (miễn phí)
+
+1. Vào https://console.firebase.google.com → **Add project** → đặt tên (vd
+   `so-xoi`) → tạo xong.
+2. Vào **Build → Authentication → Get started** → tab **Sign-in method** →
+   bật **Email/Password**.
+3. Vào **Build → Firestore Database → Create database** → chọn **Production
+   mode** → chọn khu vực gần Việt Nam (vd `asia-southeast1`).
+4. Vào **Project settings** (biểu tượng bánh răng) → mục **Your apps** → bấm
+   biểu tượng **</>** (Web) → đặt tên app → **Register app**. Firebase sẽ hiện
+   một đoạn `firebaseConfig = {...}` — copy các giá trị đó.
+
+## 2. Điền cấu hình vào project
+
+Mở file `firebase-config.js`, dán đúng các giá trị Firebase vừa copy vào:
+
+```js
+export const firebaseConfig = {
+  apiKey: "...",
+  authDomain: "...",
+  projectId: "...",
+  storageBucket: "...",
+  messagingSenderId: "...",
+  appId: "...",
+};
+```
+
+> Đây **không phải** khoá bí mật — Firebase web config vốn công khai được,
+> bảo mật thật sự nằm ở `firestore.rules`.
+
+## 3. Deploy luật bảo mật Firestore
+
+Mở **Firestore Database → Rules** trong Firebase Console, xoá hết nội dung
+mặc định, dán toàn bộ nội dung file `firestore.rules` vào, bấm **Publish**.
+
+## 4. Tạo tài khoản Chủ quán đầu tiên
+
+Vì chỉ "Chủ quán" mới tạo được điểm bán và tài khoản khác trong app, tài
+khoản chủ quán **đầu tiên** cần tạo thủ công một lần:
+
+1. **Authentication → Users → Add user** → nhập email + mật khẩu cho chính bạn.
+2. Copy **User UID** vừa tạo (cột UID trong danh sách).
+3. **Firestore Database → Start collection** → Collection ID: `locations` →
+   tạo trước ít nhất 1 tài liệu bếp trung tâm, ví dụ Document ID để tự động,
+   các field:
+   - `name` (string): `Bếp trung tâm`
+   - `type` (string): `kitchen`
+   - `giaBan` (number): giá bán mỗi phần, vd `15000`
+   - `luongMacDinh` (number): lương cơ bản mặc định/ngày, vd `60000`
+   - `active` (boolean): `true`
+   - Ghi lại **Document ID** vừa tạo (đây chính là `locationId` của bếp).
+4. Tạo tiếp collection `users` → Document ID: dán đúng UID vừa copy ở bước 1
+   → thêm các field:
+   - `name` (string): tên bạn, vd `Chị Hai`
+   - `role` (string): `admin`
+   - `email` (string): email vừa tạo
+   - `locationId` (string): Document ID của bếp trung tâm ở bước 3
+   - `active` (boolean): `true`
+5. Lưu lại. Giờ bạn có thể đăng nhập vào app bằng email/mật khẩu này với vai
+   trò Chủ quán. Vào mục **Quản lý** để thêm các điểm bán còn lại và tạo tài
+   khoản cho nhân viên (mục này tự gán `locationId` cho bạn, không cần thao
+   tác thủ công trên Firestore nữa từ đây trở đi).
+
+## 5. Đưa lên GitHub và bật GitHub Pages
+
+```bash
+git init
+git add .
+git commit -m "Sổ Xôi - bếp trung tâm & điểm bán"
+git branch -M main
+git remote add origin https://github.com/<tên-bạn>/<tên-repo>.git
+git push -u origin main
+```
+
+> Nếu bạn có dùng bộ công cụ dev (mục "Công cụ phát triển" ở trên) và đã lỡ
+> chạy `npm install` **trước** `git init` ở trên, chạy lại `npm install` 1
+> lần nữa ngay sau `git init` — để Git hook tự cập nhật `sw.js` (mục "Version
+> cache offline tự động") được cài đúng. Nếu không dùng bộ công cụ dev/không
+> cài Node.js gì cả thì bỏ qua, không ảnh hưởng gì tới việc app chạy được.
+
+Sau đó vào repo trên GitHub → **Settings → Pages** → mục **Source** chọn
+nhánh `main`, thư mục `/ (root)` → **Save**. Sau 1–2 phút, app sẽ chạy tại:
+
+```
+https://<tên-bạn>.github.io/<tên-repo>/
+```
+
+Mở link đó trên điện thoại → trình duyệt sẽ gợi ý **"Thêm vào Màn hình
+chính"** để dùng như một app thật.
+
+## 6. Ghi chú vận hành
+
+- **Thưởng** không tự tính, bạn nhập tay và ghi chú lý do — giống cách làm
+  trong sheet cũ.
+- **Doanh thu ước tính** = Số lượng bán × Giá bán mỗi phần của **điểm bán đó**
+  (đặt riêng cho từng điểm ở mục Quản lý → Điểm bán). Đây là ước tính, không
+  thay cho sổ thu tiền thực tế.
+- **Chi phí nguyên liệu** phát sinh chung ở bếp trung tâm nên báo cáo không
+  tự chia đều cho từng điểm bán — xem tổng chi phí NL ở lựa chọn "Tất cả
+  điểm" hoặc chọn đúng bếp.
+- **Tồn kho** tính trên cửa sổ 365 ngày gần nhất (nhập − đã chuyển đi). Ở màn
+  Kho (bếp/admin), bấm **"Kiểm kê kho"** cạnh bảng Tồn kho hiện tại để nhập
+  tồn kho ban đầu hoặc đối chiếu định kỳ: nhập số đếm thực tế cho từng
+  nguyên liệu, hệ thống tự tính chênh lệch và ghi 1 dòng "nhập nguyên liệu"
+  điều chỉnh (âm hoặc dương) — không cần tính tay. Mục "Các lần điều chỉnh
+  kiểm kê gần đây" ngay trong Kiểm kê kho cho sửa/xoá lại nếu lỡ nhập nhầm.
+- **Sản xuất / Điểm bán**: ô chọn "Tất cả / Sản xuất / Điểm bán" cạnh bảng Tồn
+  kho hiện tại lọc nguyên liệu theo mục đích dùng — tick "SX"/"ĐB" ở bảng
+  Kiểm kê kho để phân loại (1 nguyên liệu tick được cả 2, ví dụ gạo nếp vừa
+  dùng nấu vừa bán lẻ). Chưa tick gì thì mặc định coi là "Sản xuất" (không bị
+  mất khỏi màn hình mặc định), phải tự tick "ĐB" cho nguyên liệu nào cũng
+  dùng ở điểm bán.
+- **Đơn vị nguyên liệu** (kg, gói, cái...) giờ là ô gõ tự do (có gợi ý), không
+  còn giới hạn trong danh sách cố định — gõ đơn vị nào cũng được. **Từ đợt 8**,
+  hệ thống tự chuẩn hoá đơn vị (bỏ khoảng trắng thừa, không phân biệt
+  hoa/thường) mỗi khi tính tồn kho, để tránh trường hợp gõ "Lít" 1 lần rồi
+  "lít" lần khác bị tính thành 2 loại tồn kho riêng (gây ra số âm sai dù hàng
+  vẫn đủ) — không cần sửa lại các bản ghi cũ, chỉ cần vào lại app là số liệu
+  tự đúng.
+- **Xoá nguyên liệu chưa dùng khỏi Kiểm kê kho / Tồn kho hiện tại** (mới đợt
+  8): với nguyên liệu chưa từng có lần nhập/chuyển hàng nào (vd nằm trong gợi
+  ý mặc định nhưng quán không dùng, như "Đậu xanh"), bảng Kiểm kê kho giờ có
+  nút **Xoá** để ẩn hẳn nó khỏi cả 2 bảng — không mất dữ liệu gì (vì chưa có
+  dữ liệu thật để mất), và nếu sau này có nhập/chuyển hàng đúng tên nguyên
+  liệu đó thì nó tự hiện lại bình thường. Nguyên liệu **đã có** lịch sử nhập/
+  chuyển (có tồn kho thật) thì chưa hỗ trợ xoá qua nút này, để tránh nhầm lẫn
+  giữa "ẩn khỏi danh sách" và "xoá dữ liệu tồn kho thật".
+- **Màn Kho của nhân viên điểm bán** giờ có thêm khối "Nguyên vật liệu dùng
+  cho điểm bán" (dạng chip, bấm vào để điền nhanh tên vào form đặt hàng) và ô
+  gợi ý ở "Nguyên liệu / mặt hàng cần" cũng chỉ lấy từ đúng danh sách này —
+  lấy theo nguyên liệu đã được tick "Dùng cho ĐB" ở mục Kiểm kê kho bên bếp.
+  Nếu chủ quán/bếp chưa tick phân loại "Điểm bán" cho nguyên liệu nào, khối
+  này hiện thông báo nhắc, và ô gợi ý tạm rơi về danh sách gợi ý chung để
+  form vẫn dùng được (nhân viên vẫn tự gõ tên nguyên liệu cần bình thường).
+  Nhân viên điểm bán không thấy số lượng tồn kho của bếp, chỉ thấy tên nguyên
+  liệu để biết cái gì có thể đặt.
+- Mục **"Định mức nguyên liệu / phần"** ở Quản lý đã được gỡ bỏ theo yêu cầu
+  (không còn màn hình để thêm/sửa định mức và ngưỡng cảnh báo tồn kho mới) —
+  nhưng dữ liệu định mức/ngưỡng đã đặt từ trước vẫn được dùng bình thường cho
+  cảnh báo tồn kho thấp (mục Kho) và giá vốn nguyên liệu theo định mức (mục
+  Báo cáo).
+- Đổi tên/giá bán/lương mặc định của 1 điểm ở mục Quản lý sẽ áp dụng cho các
+  phiếu **mới** từ lúc đó; phiếu cũ đã lưu không bị tính lại.
+
+## Nâng cấp về sau (tuỳ chọn)
+
+- Thêm Cloud Functions để chủ quán tạo tài khoản nhân viên mà không cần mật
+  khẩu tạm (gửi link mời qua email).
+- Thêm biểu đồ lợi nhuận theo tháng, xuất báo cáo PDF.
+- Phân bổ chi phí nguyên liệu về từng điểm bán theo tỷ lệ số lượng bán, nếu
+  cần độ chính xác lợi nhuận theo điểm cao hơn.
+- Thêm bước kiểm kho định kỳ có ghi log điều chỉnh riêng (thay vì chỉ dựa vào
+  nhập − xuất).

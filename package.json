@@ -1,0 +1,26 @@
+{
+  "name": "so-xoi",
+  "private": true,
+  "version": "1.0.0",
+  "description": "App web (PWA) quản lý quán xôi — bếp trung tâm, điểm bán, lương, nguyên liệu, doanh thu.",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:sw-version": "node scripts/gen-sw-version.js",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.11.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.12.0",
+    "husky": "^9.1.7",
+    "prettier": "^3.9.8",
+    "vitest": "^5.0.1"
+  }
+}
