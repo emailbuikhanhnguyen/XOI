@@ -20,6 +20,13 @@ export const state = {
 export function staffName(uid) { return state.staffDirectory[uid]?.name || "Không rõ"; }
 export function locationName(id) { return state.locationsDirectory[id]?.name || (id ? "(điểm đã xoá)" : "Chưa gán điểm"); }
 export function locationGiaBan(id) { return state.locationsDirectory[id]?.giaBan ?? state.settings.giaBan ?? 0; }
+// Giá bán dùng để tính doanh thu của 1 phiếu chấm công: ưu tiên giá đã "chụp"
+// (snapshot) lúc tạo phiếu (giaBanTaiThoiDiem) thay vì tra cứu giá bán HIỆN
+// TẠI của điểm bán — nếu không, khi chủ quán đổi giá bán sau này, doanh thu
+// của mọi phiếu CŨ (đã qua) sẽ âm thầm bị tính lại sai theo giá mới. Phiếu cũ
+// tạo trước khi có field này (chưa có giaBanTaiThoiDiem) vẫn rơi về tra cứu
+// giá hiện tại như cách tính cũ, để không mất/sai dữ liệu lịch sử đã có.
+export function entryGiaBan(r) { return r?.giaBanTaiThoiDiem ?? locationGiaBan(r?.locationId); }
 export function isAdmin() { return state.profile?.role === "admin"; }
 export function myLocation() { return state.locationsDirectory[state.profile?.locationId] || null; }
 export function activeLocations() { return Object.entries(state.locationsDirectory).filter(([, l]) => l.active !== false); }

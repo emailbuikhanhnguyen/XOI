@@ -6,7 +6,7 @@
 // (v2, v3...) là nguyên nhân người dùng bị "kẹt" ở bản HTML/JS cũ (vd. màn
 // đăng nhập không tự ẩn sau khi đăng nhập thành công) dù code nguồn đã sửa
 // xong — cơ chế tự động này giải quyết đúng vấn đề đó.
-const CACHE_NAME = "so-xoi-1f5c273bbe";
+const CACHE_NAME = "so-xoi-4365ec2a01";
 const APP_SHELL = [
   "./",
   "./index.html",

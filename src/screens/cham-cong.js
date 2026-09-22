@@ -1,12 +1,13 @@
 /* ===================== CHẤM CÔNG ===================== */
 import {
-  addDoc, collection, deleteDoc, doc, serverTimestamp, updateDoc,
+  addDoc, collection, deleteDoc, doc, getDoc, serverTimestamp, updateDoc,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { db } from "../firebase-init.js";
 import { $, $$, viewRoot, mount, emptyState, toast, reportError } from "../ui.js";
-import { state, isAdmin, staffName, locationName } from "../state.js";
-import { fetchEntriesByUid, saveOp } from "../data.js";
-import { addDays, escapeHtml, fmt, fmtNum, formatDateVN, matchesSearch, todayISO } from "../calc.js";
+import { state, isAdmin, locationGiaBan, staffName, locationName } from "../state.js";
+import { fetchEntriesByUid, logChange, saveOp } from "../data.js";
+import { addDays, escapeHtml, fmt, fmtNum, formatDateVN, matchesSearch, mondayOf, todayISO } from "../calc.js";
+import { DATE_ENTRY_PAST_DAYS } from "../constants.js";
 
 let entryCacheForUser = [];
 // uid mà admin đang xem/sửa phiếu chấm công (mặc định là chính admin). Nhân
@@ -71,6 +72,8 @@ export async function renderChamCong() {
   updateEntryLocationBadge();
 
   const dateEl = $("#entry-date");
+  dateEl.min = addDays(todayISO(), -DATE_ENTRY_PAST_DAYS);
+  dateEl.max = todayISO();
   dateEl.value = todayISO();
   $("#entry-luong").value = state.locationsDirectory[currentEntryLocationId()]?.luongMacDinh ?? state.settings.luongMacDinh ?? "";
 
@@ -92,6 +95,10 @@ export async function renderChamCong() {
 
   $("#form-entry").addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (dateEl.value < dateEl.min || dateEl.value > dateEl.max) {
+      toast(`Chỉ được chọn ngày từ ${formatDateVN(dateEl.min)} đến ${formatDateVN(dateEl.max)}.`);
+      return;
+    }
     const off = offEl.checked;
     const targetLocationId = currentEntryLocationId();
     if (!targetLocationId) {
@@ -116,10 +123,19 @@ export async function renderChamCong() {
       updatedAt: serverTimestamp(),
     };
     const wasEditing = !!editingEntryId;
-    if (!wasEditing) payload.createdAt = serverTimestamp();
+    if (!wasEditing) {
+      payload.createdAt = serverTimestamp();
+      // Chụp lại giá bán của điểm bán NGAY LÚC TẠO phiếu — chỉ đặt 1 lần khi
+      // tạo mới, cố tình KHÔNG ghi đè lại mỗi lần sửa phiếu sau này (nếu
+      // không, sửa phiếu cũ sẽ vô tình cập nhật doanh thu phiếu đó theo giá
+      // bán MỚI NHẤT thay vì giá đúng lúc bán). Xem entryGiaBan() ở state.js.
+      payload.giaBanTaiThoiDiem = locationGiaBan(targetLocationId);
+    }
+    const beforeEntryRow = wasEditing ? entryCacheForUser.find((r) => r.id === editingEntryId) : null;
     await saveOp(
       () => (wasEditing ? updateDoc(doc(db, "entries", editingEntryId), payload) : addDoc(collection(db, "entries"), payload)),
       async (confirmed) => {
+        if (wasEditing) logChange("entries", editingEntryId, "update", beforeEntryRow, payload);
         toast(wasEditing ? "Đã cập nhật phiếu chấm công" : (confirmed ? "Đã lưu phiếu chấm công" : "Đã lưu phiếu (chưa có mạng — sẽ tự đồng bộ)"));
         resetEntryForm();
         await loadAndRenderEntryList();
@@ -134,11 +150,30 @@ export async function renderChamCong() {
   await loadAndRenderEntryList();
 }
 
+// Tuần chứa phiếu này đã được chủ quán quyết toán (tick "Đã thanh toán" ở
+// Báo cáo) chưa — dùng để CẢNH BÁO (không chặn) khi nhân viên/chủ quán sửa
+// hoặc xoá 1 phiếu chấm công của tuần đã trả lương, để tránh vô tình làm số
+// tiền đã trả không còn khớp với dữ liệu chấm công nữa mà không ai để ý.
+async function isSettlementPaid(row) {
+  if (!row?.uid || !row?.date) return false;
+  try {
+    const snap = await getDoc(doc(db, "settlements", `${row.uid}_${mondayOf(row.date)}`));
+    return !!(snap.exists() && snap.data().paid);
+  } catch (err) {
+    console.error(err);
+    return false; // Tra cứu lỗi (vd mất mạng) thì thôi, không cảnh báo thêm — không phải lỗi chặn thao tác chính.
+  }
+}
+
 function resetEntryForm() {
   editingEntryId = null;
   const f = $("#form-entry");
   if (!f) return;
   f.reset();
+  // form.reset() không đụng tới min/max (chỉ reset value) — đặt lại min về
+  // mức chuẩn phòng khi lần sửa trước đó đã nới min để hiện được 1 phiếu cũ
+  // hơn (xem nhánh editBtn bên dưới).
+  $("#entry-date").min = addDays(todayISO(), -DATE_ENTRY_PAST_DAYS);
   $("#entry-date").value = todayISO();
   $("#entry-luong").value = state.locationsDirectory[currentEntryLocationId()]?.luongMacDinh ?? state.settings.luongMacDinh ?? "";
   $("#btn-entry-cancel").hidden = true;
@@ -205,7 +240,13 @@ viewRoot.addEventListener("click", async (e) => {
     const id = editBtn.dataset.edit;
     const row = entryCacheForUser.find((r) => r.id === id);
     if (!row) return;
+    if (await isSettlementPaid(row)) {
+      if (!confirm("Tuần này đã được quyết toán (đánh dấu Đã thanh toán) — sửa phiếu có thể làm số liệu không còn khớp với số đã trả. Vẫn muốn sửa?")) return;
+    }
     editingEntryId = id;
+    // Nới min nếu phiếu đang sửa cũ hơn giới hạn chuẩn, để không bị trình
+    // duyệt coi ngày hiện có của phiếu là "không hợp lệ" khi chưa hề đổi gì.
+    if (row.date < $("#entry-date").min) $("#entry-date").min = row.date;
     $("#entry-date").value = row.date;
     $("#entry-off").checked = !!row.offDay;
     $$("input", $("#entry-work-fields")).forEach((i) => (i.disabled = !!row.offDay));
@@ -221,9 +262,14 @@ viewRoot.addEventListener("click", async (e) => {
   }
   if (delBtn && $("#form-entry")) {
     const id = delBtn.dataset.del;
-    if (!confirm("Xoá phiếu chấm công này?")) return;
+    const row = entryCacheForUser.find((r) => r.id === id);
+    const paidWarning = row && await isSettlementPaid(row)
+      ? "Tuần này đã được quyết toán (đánh dấu Đã thanh toán) — xoá phiếu có thể làm số liệu không còn khớp với số đã trả.\n\n"
+      : "";
+    if (!confirm(paidWarning + "Xoá phiếu chấm công này?")) return;
     try {
       await deleteDoc(doc(db, "entries", id));
+      logChange("entries", id, "delete", row, null);
       toast("Đã xoá phiếu");
       await loadAndRenderEntryList();
     } catch (err) { reportError(err, "Không xoá được"); }

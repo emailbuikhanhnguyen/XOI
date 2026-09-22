@@ -53,6 +53,15 @@ export function mondayOf(dateStr) {
 
 export const WEEKDAY = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
 
+// Ngày nhập liệu (chấm công/nhập kho/chuyển hàng/thu chi) có nằm trong
+// khoảng cho phép không: không được là ngày TƯƠNG LAI (so với `today`), và
+// không được xa quá `pastDays` ngày trong quá khứ.
+export function isDateInAllowedRange(dateStr, today = todayISO(), pastDays = 30) {
+  if (!dateStr) return false;
+  if (dateStr > today) return false;
+  return dateStr >= addDays(today, -pastDays);
+}
+
 export function weekdayLabel(dateStr) {
   return WEEKDAY[new Date(dateStr + "T00:00:00").getDay()];
 }

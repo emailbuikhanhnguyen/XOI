@@ -68,11 +68,21 @@ service cloud.firestore {
       allow update, delete: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
     }
 
-    // Chuyển hàng từ bếp trung tâm ra điểm bán
+    // Chuyển hàng từ bếp trung tâm ra điểm bán. Chủ quán / người tạo (bếp)
+    // sửa/xoá được toàn bộ nội dung. Điểm bán NHẬN hàng (myProfile().locationId
+    // == resource.data.toLocationId) được cập nhật riêng 3 trường xác nhận
+    // nhận hàng (confirmed/confirmedAt/issueNote) — để tự xác nhận đã nhận đủ
+    // hay báo thiếu/sai — nhưng KHÔNG được sửa các trường khác của phiếu
+    // (số lượng, tên hàng...), tránh điểm bán tự ý chỉnh dữ liệu bếp đã ghi.
     match /transfers/{id} {
       allow read: if isSignedIn();
       allow create: if isSignedIn();
-      allow update, delete: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow update: if isAdmin()
+        || (isSignedIn() && resource.data.uid == request.auth.uid)
+        || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            && myProfile().locationId == resource.data.toLocationId
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmed', 'confirmedAt', 'issueNote']));
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
     }
 
     // Thu & chi khác ngoài lương/nguyên liệu (mặt bằng, điện nước, sửa chữa...) — chỉ chủ quán quản lý
@@ -116,6 +126,17 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
       allow update: if isKitchenOrAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
       allow delete: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // Nhật ký thay đổi (ai sửa/xoá gì, lúc nào, giá trị trước/sau) — ghi tự
+    // động mỗi khi có thao tác sửa/xoá dữ liệu quan trọng (xem logChange()
+    // trong src/data.js). Chỉ cho TẠO, không cho sửa/xoá — để đảm bảo nhật
+    // ký không bị chỉnh sửa lại (bất biến). Chỉ chủ quán đọc được, vì đây là
+    // dữ liệu nhạy cảm (ai đã sửa/xoá gì của ai).
+    match /changeLog/{id} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
     }
   }
 }

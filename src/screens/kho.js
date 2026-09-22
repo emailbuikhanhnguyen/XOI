@@ -7,9 +7,9 @@ import { $, $$, viewRoot, mount, emptyState, toast, reportError, wireReceiptInpu
 import {
   state, isAdmin, isKitchenContext, kitchenLocations, locationName, operatingKitchenId, pointLocations,
 } from "../state.js";
-import { fetchIngredientsByRange, fetchOrdersByRange, fetchTransfersByRange, saveOp } from "../data.js";
+import { fetchIngredientsByRange, fetchOrdersByRange, fetchTransfersByRange, logChange, saveOp } from "../data.js";
 import { addDays, escapeHtml, fmt, fmtNum, formatDateVN, matchesSearch, normalizeUnit, slugifyItemName, todayISO } from "../calc.js";
-import { ITEM_SUGGESTIONS, STOCK_WINDOW_DAYS, UNIT_SUGGESTIONS } from "../constants.js";
+import { DATE_ENTRY_PAST_DAYS, ITEM_SUGGESTIONS, STOCK_WINDOW_DAYS, UNIT_SUGGESTIONS } from "../constants.js";
 
 let ingCacheGlobal = [];
 let transferCacheGlobal = [];
@@ -197,7 +197,14 @@ export async function renderKho() {
     renderStockTakeTable(opKitchenId);
   });
 
+  // Giới hạn khoảng ngày cho phép chọn — KHÔNG áp dụng cho order-date (đặt
+  // hàng luôn hướng tới tương lai gần, không phải ghi nhận việc đã xảy ra).
+  const dateMin = addDays(todayISO(), -DATE_ENTRY_PAST_DAYS);
+  $("#ing-date").min = dateMin;
+  $("#ing-date").max = todayISO();
   $("#ing-date").value = todayISO();
+  $("#trf-date").min = dateMin;
+  $("#trf-date").max = todayISO();
   $("#trf-date").value = todayISO();
   ingReceiptCtl = wireReceiptInput("ing-anh", "ing-anh-row", "ing-anh-preview", "ing-anh-clear");
   const trfToSel = $("#trf-to");
@@ -215,6 +222,11 @@ export async function renderKho() {
 
   $("#form-ing").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const ingDateEl = $("#ing-date");
+    if (ingDateEl.value < ingDateEl.min || ingDateEl.value > ingDateEl.max) {
+      toast(`Chỉ được chọn ngày từ ${formatDateVN(ingDateEl.min)} đến ${formatDateVN(ingDateEl.max)}.`);
+      return;
+    }
     const payload = {
       uid: state.currentUser.uid,
       locationId: opKitchenId,
@@ -230,9 +242,11 @@ export async function renderKho() {
     payload.anhHoaDon = ingReceiptCtl ? ingReceiptCtl.get() : "";
     const wasEditing = !!editingIngId;
     if (!wasEditing) payload.createdAt = serverTimestamp();
+    const beforeIngRow = wasEditing ? ingCacheGlobal.find((r) => r.id === editingIngId) : null;
     await saveOp(
       () => (wasEditing ? updateDoc(doc(db, "ingredients", editingIngId), payload) : addDoc(collection(db, "ingredients"), payload)),
       async (confirmed) => {
+        if (wasEditing) logChange("ingredients", editingIngId, "update", beforeIngRow, payload);
         toast(wasEditing ? "Đã cập nhật" : (confirmed ? "Đã lưu nguyên liệu" : "Đã lưu (chưa có mạng — sẽ tự đồng bộ)"));
         resetIngForm();
         await loadAndRenderKho(opKitchenId);
@@ -242,6 +256,11 @@ export async function renderKho() {
 
   $("#form-trf").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const trfDateEl = $("#trf-date");
+    if (trfDateEl.value < trfDateEl.min || trfDateEl.value > trfDateEl.max) {
+      toast(`Chỉ được chọn ngày từ ${formatDateVN(trfDateEl.min)} đến ${formatDateVN(trfDateEl.max)}.`);
+      return;
+    }
     const toId = $("#trf-to").value;
     if (!toId) { toast("Chọn điểm bán nhận hàng"); return; }
     const payload = {
@@ -258,9 +277,11 @@ export async function renderKho() {
     if (!payload.itemName) { toast("Nhập tên hàng chuyển"); return; }
     const wasEditing = !!editingTransferId;
     if (!wasEditing) payload.createdAt = serverTimestamp();
+    const beforeTrfRow = wasEditing ? transferCacheGlobal.find((r) => r.id === editingTransferId) : null;
     await saveOp(
       () => (wasEditing ? updateDoc(doc(db, "transfers", editingTransferId), payload) : addDoc(collection(db, "transfers"), payload)),
       async (confirmed) => {
+        if (wasEditing) logChange("transfers", editingTransferId, "update", beforeTrfRow, payload);
         toast(wasEditing ? "Đã cập nhật" : (confirmed ? "Đã ghi nhận chuyển hàng" : "Đã ghi nhận (chưa có mạng — sẽ tự đồng bộ)"));
         resetTrfForm();
         await loadAndRenderKho(opKitchenId);
@@ -276,6 +297,9 @@ function resetIngForm() {
   const f = $("#form-ing");
   if (!f) return;
   f.reset();
+  // form.reset() không đụng tới min/max — đặt lại min chuẩn phòng khi lần
+  // sửa trước đã nới min để hiện được 1 dòng cũ hơn (xem nhánh ingEditBtn).
+  $("#ing-date").min = addDays(todayISO(), -DATE_ENTRY_PAST_DAYS);
   $("#ing-date").value = todayISO();
   $("#btn-ing-cancel").hidden = true;
   ingReceiptCtl?.set("");
@@ -286,6 +310,7 @@ function resetTrfForm() {
   const f = $("#form-trf");
   if (!f) return;
   f.reset();
+  $("#trf-date").min = addDays(todayISO(), -DATE_ENTRY_PAST_DAYS);
   $("#trf-date").value = todayISO();
   $("#btn-trf-cancel").hidden = true;
 }
@@ -658,6 +683,16 @@ function renderIngCards(rows) {
   `).join("");
 }
 
+// Trạng thái xác nhận nhận hàng của điểm bán cho 1 lần chuyển hàng —
+// r.confirmed chưa có (undefined) = chưa ai xác nhận gì (mặc định của các
+// phiếu cũ trước khi có tính năng này, và phiếu mới vừa tạo); true = điểm
+// bán xác nhận đã nhận đủ; false (kèm issueNote) = điểm bán báo thiếu/sai.
+function transferStatusBadge(r) {
+  if (r.confirmed === true) return `<span class="badge-paid">Đã xác nhận nhận đủ</span>`;
+  if (r.confirmed === false) return `<span class="badge-unpaid">Báo thiếu/sai</span>`;
+  return `<span class="entry-off-badge">Chờ xác nhận</span>`;
+}
+
 function renderTransferCards(rows, showActions) {
   if (!rows.length) return "";
   return rows.map((r) => `
@@ -666,13 +701,21 @@ function renderTransferCards(rows, showActions) {
         <span class="entry-date">${formatDateVN(r.date)}${showActions ? " · " + escapeHtml(locationName(r.toLocationId)) : ""}</span>
         <span class="entry-total">${fmtNum(r.qty)} ${escapeHtml(r.unit)}</span>
       </div>
-      <div class="entry-meta"><span>${escapeHtml(r.itemName)}${!showActions ? " · từ " + escapeHtml(locationName(r.fromLocationId)) : ""}</span></div>
+      <div class="entry-meta">
+        <span>${escapeHtml(r.itemName)}${!showActions ? " · từ " + escapeHtml(locationName(r.fromLocationId)) : ""}</span>
+        <span>${transferStatusBadge(r)}</span>
+      </div>
       ${r.ghiChu ? `<div class="entry-note">${escapeHtml(r.ghiChu)}</div>` : ""}
+      ${r.issueNote ? `<div class="entry-note">Điểm bán báo: ${escapeHtml(r.issueNote)}</div>` : ""}
       ${showActions ? `
       <div class="entry-row-actions">
         <button class="link-btn" data-trf-edit="${r.id}">Sửa</button>
         <button class="link-btn danger" data-trf-del="${r.id}">Xoá</button>
-      </div>` : ""}
+      </div>` : (r.confirmed === undefined ? `
+      <div class="entry-row-actions">
+        <button class="link-btn" data-trf-confirm="${r.id}">Xác nhận đã nhận</button>
+        <button class="link-btn danger" data-trf-issue="${r.id}">Báo thiếu/sai</button>
+      </div>` : "")}
     </div>
   `).join("");
 }
@@ -710,6 +753,9 @@ viewRoot.addEventListener("click", async (e) => {
     const row = ingCacheGlobal.find((r) => r.id === id);
     if (!row) return;
     editingIngId = id;
+    // Nới min nếu dòng đang sửa cũ hơn giới hạn chuẩn, để không bị trình
+    // duyệt coi ngày hiện có là "không hợp lệ" khi chưa hề đổi gì.
+    if (row.date < $("#ing-date").min) $("#ing-date").min = row.date;
     $("#ing-date").value = row.date;
     $("#ing-item").value = row.itemName || "";
     $("#ing-unit").value = row.unit || "kg";
@@ -722,9 +768,11 @@ viewRoot.addEventListener("click", async (e) => {
   }
   if (ingDelBtn) {
     const id = ingDelBtn.dataset.ingDel;
+    const row = ingCacheGlobal.find((r) => r.id === id);
     if (!confirm("Xoá lần nhập nguyên liệu này?")) return;
     try {
       await deleteDoc(doc(db, "ingredients", id));
+      logChange("ingredients", id, "delete", row, null);
       toast("Đã xoá");
       await loadAndRenderKho();
     } catch (err) { reportError(err, "Không xoá được"); }
@@ -737,6 +785,7 @@ viewRoot.addEventListener("click", async (e) => {
     const row = transferCacheGlobal.find((r) => r.id === id);
     if (!row) return;
     editingTransferId = id;
+    if (row.date < $("#trf-date").min) $("#trf-date").min = row.date;
     $("#trf-date").value = row.date;
     $("#trf-to").value = row.toLocationId || "";
     $("#trf-item").value = row.itemName || "";
@@ -748,12 +797,42 @@ viewRoot.addEventListener("click", async (e) => {
   }
   if (trfDelBtn) {
     const id = trfDelBtn.dataset.trfDel;
+    const row = transferCacheGlobal.find((r) => r.id === id);
     if (!confirm("Xoá lần chuyển hàng này?")) return;
     try {
       await deleteDoc(doc(db, "transfers", id));
+      logChange("transfers", id, "delete", row, null);
       toast("Đã xoá");
       await loadAndRenderKho();
     } catch (err) { reportError(err, "Không xoá được"); }
+  }
+
+  // Xác nhận nhận hàng 2 chiều: điểm bán xác nhận đã nhận đủ, hoặc báo
+  // thiếu/sai để bếp biết mà xử lý — thay vì bếp chỉ biết "đã gửi" mà không
+  // rõ điểm bán có thực sự nhận đủ/đúng hay không.
+  const trfConfirmBtn = e.target.closest("[data-trf-confirm]");
+  const trfIssueBtn = e.target.closest("[data-trf-issue]");
+  if (trfConfirmBtn) {
+    const id = trfConfirmBtn.dataset.trfConfirm;
+    if (!confirm("Xác nhận đã nhận đủ hàng này?")) return;
+    try {
+      await updateDoc(doc(db, "transfers", id), { confirmed: true, confirmedAt: serverTimestamp(), issueNote: "" });
+      toast("Đã xác nhận nhận hàng");
+      await loadAndRenderReceived();
+    } catch (err) { reportError(err, "Không xác nhận được: " + (err.message || "")); }
+  }
+  if (trfIssueBtn) {
+    const id = trfIssueBtn.dataset.trfIssue;
+    const note = prompt("Mô tả ngắn gọn vấn đề (thiếu bao nhiêu, sai gì...):");
+    if (note === null) return; // bấm Huỷ ở hộp thoại
+    try {
+      await updateDoc(doc(db, "transfers", id), {
+        confirmed: false, confirmedAt: serverTimestamp(),
+        issueNote: note.trim() || "Có vấn đề (chưa ghi rõ chi tiết)",
+      });
+      toast("Đã gửi báo cáo thiếu/sai tới bếp");
+      await loadAndRenderReceived();
+    } catch (err) { reportError(err, "Không gửi được báo cáo: " + (err.message || "")); }
   }
 
   const orderFillBtn = e.target.closest("[data-order-fill]");

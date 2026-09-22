@@ -5,9 +5,9 @@ import {
 import { db } from "../firebase-init.js";
 import { $, $$, viewRoot, mount, emptyState, toast, reportError, wireReceiptInput, receiptThumbHtml } from "../ui.js";
 import { state, activeLocations, staffName, locationName } from "../state.js";
-import { fetchThuChiByRange, saveOp } from "../data.js";
+import { fetchThuChiByRange, logChange, saveOp } from "../data.js";
 import { addDays, escapeHtml, fmt, formatDateVN, matchesSearch, mondayOf, todayISO } from "../calc.js";
-import { THU_CHI_CATEGORIES } from "../constants.js";
+import { DATE_ENTRY_PAST_DAYS, THU_CHI_CATEGORIES } from "../constants.js";
 
 let thuChiCacheGlobal = [];
 let editingThuChiId = null;
@@ -26,6 +26,8 @@ export async function renderThuChi() {
   tcListLimit = 30;
   viewRoot.insertAdjacentHTML("beforeend", thuChiDatalistHtml());
 
+  $("#tc-date").min = addDays(todayISO(), -DATE_ENTRY_PAST_DAYS);
+  $("#tc-date").max = todayISO();
   $("#tc-date").value = todayISO();
   $("#tc-loai").value = "chi";
   tcReceiptCtl = wireReceiptInput("tc-anh", "tc-anh-row", "tc-anh-preview", "tc-anh-clear");
@@ -62,6 +64,11 @@ export async function renderThuChi() {
 
   $("#form-thuchi").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const tcDateEl = $("#tc-date");
+    if (tcDateEl.value < tcDateEl.min || tcDateEl.value > tcDateEl.max) {
+      toast(`Chỉ được chọn ngày từ ${formatDateVN(tcDateEl.min)} đến ${formatDateVN(tcDateEl.max)}.`);
+      return;
+    }
     const soTien = parseFloat($("#tc-sotien").value) || 0;
     const danhMuc = $("#tc-danhmuc").value.trim();
     if (!danhMuc) { toast("Nhập danh mục"); return; }
@@ -80,9 +87,11 @@ export async function renderThuChi() {
     };
     const wasEditing = !!editingThuChiId;
     if (!wasEditing) payload.createdAt = serverTimestamp();
+    const beforeTcRow = wasEditing ? thuChiCacheGlobal.find((r) => r.id === editingThuChiId) : null;
     await saveOp(
       () => (wasEditing ? updateDoc(doc(db, "thuchi", editingThuChiId), payload) : addDoc(collection(db, "thuchi"), payload)),
       async (confirmed) => {
+        if (wasEditing) logChange("thuchi", editingThuChiId, "update", beforeTcRow, payload);
         toast(wasEditing ? "Đã cập nhật giao dịch" : (confirmed ? "Đã lưu giao dịch" : "Đã lưu (chưa có mạng — sẽ tự đồng bộ)"));
         resetThuChiForm();
         await loadAndRenderThuChi();
@@ -98,6 +107,9 @@ function resetThuChiForm() {
   const f = $("#form-thuchi");
   if (!f) return;
   f.reset();
+  // form.reset() không đụng tới min/max — đặt lại min chuẩn phòng khi lần
+  // sửa trước đã nới min để hiện được 1 giao dịch cũ hơn (xem nhánh tcEditBtn).
+  $("#tc-date").min = addDays(todayISO(), -DATE_ENTRY_PAST_DAYS);
   $("#tc-date").value = todayISO();
   $("#tc-loai").value = "chi";
   $("#btn-tc-cancel").hidden = true;
@@ -182,6 +194,7 @@ viewRoot.addEventListener("click", async (e) => {
     if (!row) return;
     editingThuChiId = id;
     $("#tc-loai").value = row.loai === "thu" ? "thu" : "chi";
+    if (row.date < $("#tc-date").min) $("#tc-date").min = row.date;
     $("#tc-date").value = row.date;
     $("#tc-danhmuc").value = row.danhMuc || "";
     $("#tc-sotien").value = row.soTien || 0;
@@ -193,9 +206,11 @@ viewRoot.addEventListener("click", async (e) => {
   }
   if (tcDelBtn) {
     const id = tcDelBtn.dataset.tcDel;
+    const row = thuChiCacheGlobal.find((r) => r.id === id);
     if (!confirm("Xoá giao dịch thu/chi này?")) return;
     try {
       await deleteDoc(doc(db, "thuchi", id));
+      logChange("thuchi", id, "delete", row, null);
       toast("Đã xoá giao dịch");
       await loadAndRenderThuChi();
     } catch (err) { reportError(err, "Không xoá được"); }

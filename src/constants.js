@@ -4,6 +4,13 @@
 
 export const STOCK_WINDOW_DAYS = 365; // khoảng thời gian dùng để tính tồn kho / lịch sử gần đây
 
+// Số ngày trong quá khứ được phép chọn khi nhập ngày chấm công / nhập kho /
+// chuyển hàng / thu chi (không tính ngày hôm nay) — hạn chế gõ nhầm ngày rất
+// xa (nhầm năm...) hoặc "sửa khống" số liệu quá lâu sau khi việc đã xảy ra.
+// KHÔNG áp dụng cho ngày đặt hàng (order-date) vì đặt hàng luôn hướng tới
+// tương lai gần, không phải ghi nhận việc đã xảy ra.
+export const DATE_ENTRY_PAST_DAYS = 30;
+
 export const ITEM_SUGGESTIONS = ["Gà", "Nấm", "Gạo nếp", "Đậu xanh", "Dầu ăn", "Hành phi", "Gia vị", "Nước tương", "Túi/hộp gói"];
 
 // Gợi ý đơn vị — chỉ là gợi ý trong ô nhập tự do (list=datalist), người dùng

@@ -13,6 +13,7 @@ import {
   matchesSearch,
   slugifyItemName,
   avgUnitCostMap,
+  isDateInAllowedRange,
 } from "./calc.js";
 
 describe("fmt / fmtNum", () => {
@@ -70,6 +71,33 @@ describe("ngày tháng", () => {
     it("trả về ngày hiện tại dạng yyyy-mm-dd", () => {
       expect(todayISO()).toBe("2026-09-22");
     });
+  });
+});
+
+describe("isDateInAllowedRange", () => {
+  const today = "2026-09-22";
+
+  it("chấp nhận đúng hôm nay", () => {
+    expect(isDateInAllowedRange(today, today, 30)).toBe(true);
+  });
+
+  it("chấp nhận ngày trong quá khứ còn trong giới hạn (kể cả đúng biên)", () => {
+    expect(isDateInAllowedRange("2026-09-01", today, 30)).toBe(true);
+    expect(isDateInAllowedRange("2026-08-23", today, 30)).toBe(true); // 30 ngày trước, còn trong hạn
+  });
+
+  it("từ chối ngày quá xa trong quá khứ (quá giới hạn pastDays)", () => {
+    expect(isDateInAllowedRange("2026-08-22", today, 30)).toBe(false); // 31 ngày trước
+  });
+
+  it("từ chối mọi ngày trong tương lai", () => {
+    expect(isDateInAllowedRange("2026-09-23", today, 30)).toBe(false);
+    expect(isDateInAllowedRange("2027-01-01", today, 30)).toBe(false);
+  });
+
+  it("từ chối giá trị rỗng/undefined", () => {
+    expect(isDateInAllowedRange("", today, 30)).toBe(false);
+    expect(isDateInAllowedRange(undefined, today, 30)).toBe(false);
   });
 });
 

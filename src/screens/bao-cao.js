@@ -2,7 +2,7 @@
 import { doc, getDoc, serverTimestamp, setDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { db } from "../firebase-init.js";
 import { $, $$, mount, emptyState, toast, reportError } from "../ui.js";
-import { state, activeLocations, locationGiaBan, locationName, staffName } from "../state.js";
+import { state, activeLocations, entryGiaBan, locationName, staffName } from "../state.js";
 import { computeGiaVonPerPhan, fetchEntriesByRange, fetchIngredientsByRange, fetchThuChiByRange } from "../data.js";
 import { addDays, escapeHtml, fmt, fmtNum, isoLocal, mondayOf, todayISO, weekdayLabel } from "../calc.js";
 
@@ -79,7 +79,7 @@ async function loadReport() {
   const worked = locFilter ? allWorked.filter((r) => r.locationId === locFilter) : allWorked;
 
   const tongSoLuong = worked.reduce((s, r) => s + (r.soLuong || 0), 0);
-  const doanhThu = worked.reduce((s, r) => s + (r.soLuong || 0) * locationGiaBan(r.locationId), 0);
+  const doanhThu = worked.reduce((s, r) => s + (r.soLuong || 0) * entryGiaBan(r), 0);
   const luongThuong = worked.reduce((s, r) => s + (r.tong || 0), 0);
 
   const selectedIsPoint = locFilter && state.locationsDirectory[locFilter]?.type === "point";
@@ -141,7 +141,7 @@ async function renderMonthlyChart(locFilter, giaVonPerPhan = 0) {
     worked.forEach((r) => {
       const m = r.date.slice(0, 7);
       byMonth[m] = byMonth[m] || { doanhThu: 0, luongThuong: 0, soLuong: 0 };
-      byMonth[m].doanhThu += (r.soLuong || 0) * locationGiaBan(r.locationId);
+      byMonth[m].doanhThu += (r.soLuong || 0) * entryGiaBan(r);
       byMonth[m].luongThuong += r.tong || 0;
       byMonth[m].soLuong += r.soLuong || 0;
     });
@@ -188,7 +188,7 @@ function renderByLocationTable(allWorked, allIng, locFilter, giaVonPerPhan = 0) 
     const id = r.locationId || "__none";
     groups[id] = groups[id] || { name: locationName(r.locationId), soLuong: 0, doanhThu: 0, luongThuong: 0 };
     groups[id].soLuong += r.soLuong || 0;
-    groups[id].doanhThu += (r.soLuong || 0) * locationGiaBan(r.locationId);
+    groups[id].doanhThu += (r.soLuong || 0) * entryGiaBan(r);
     groups[id].luongThuong += r.tong || 0;
   });
   const rows = Object.values(groups).sort((a, b) => b.doanhThu - a.doanhThu);
@@ -234,7 +234,7 @@ function renderByStaffTable(worked, showLocationCol) {
 
 function renderDailyBarChart(worked, from, to) {
   const byDay = {};
-  worked.forEach((r) => { byDay[r.date] = (byDay[r.date] || 0) + (r.soLuong || 0) * locationGiaBan(r.locationId); });
+  worked.forEach((r) => { byDay[r.date] = (byDay[r.date] || 0) + (r.soLuong || 0) * entryGiaBan(r); });
   const days = [];
   let d = from;
   let guard = 0;

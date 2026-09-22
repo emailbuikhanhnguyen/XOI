@@ -2,7 +2,7 @@
 // fetch theo khoảng ngày (entries/ingredients/transfers/orders/thuchi) —
 // dùng chung cho nhiều màn hình, không đụng tới DOM.
 import {
-  collection, doc, getDoc, getDocs, query, where, orderBy,
+  addDoc, collection, doc, getDoc, getDocs, query, where, orderBy, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { db } from "./firebase-init.js";
 import { state } from "./state.js";
@@ -29,6 +29,25 @@ export async function saveOp(writePromiseFactory, onDone) {
   } catch (err) {
     reportError(err, "Lỗi khi lưu: " + (err.message || "Thử lại nhé."));
   }
+}
+
+// Ghi 1 dòng nhật ký thay đổi (ai sửa/xoá gì, lúc nào, giá trị trước/sau) vào
+// collection changeLog — để truy vết khi có tranh cãi (vd "ai xoá phiếu chấm
+// công của tôi?"). Cố tình KHÔNG async/await ở nơi gọi (gọi xong quên luôn)
+// và tự bắt lỗi ngầm (chỉ console.error): đây là dữ liệu PHỤ trợ, không được
+// để lỗi ghi log (vd mất mạng) làm chậm hay chặn thao tác chính của người
+// dùng — sửa/xoá đã thành công hay chưa không phụ thuộc vào việc ghi log này.
+export function logChange(collectionName, docId, action, before, after) {
+  addDoc(collection(db, "changeLog"), {
+    collectionName,
+    docId,
+    action, // "update" | "delete"
+    before: before ? { ...before } : null,
+    after: after ? { ...after } : null,
+    uid: state.currentUser?.uid || null,
+    name: state.profile?.name || "",
+    at: serverTimestamp(),
+  }).catch((err) => console.error("logChange thất bại:", err));
 }
 
 export async function loadStaffDirectory() {

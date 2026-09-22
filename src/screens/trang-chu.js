@@ -1,6 +1,6 @@
 /* ===================== TRANG CHỦ ===================== */
 import { $, $$, mount, emptyState } from "../ui.js";
-import { state, isAdmin, isKitchenContext, activeLocations, locationGiaBan, locationName } from "../state.js";
+import { state, isAdmin, isKitchenContext, activeLocations, entryGiaBan, locationName } from "../state.js";
 import { fetchEntriesByRange, fetchEntriesByUid, fetchIngredientsByRange, fetchTransfersByRange } from "../data.js";
 import { addDays, escapeHtml, fmt, formatDateVN, mondayOf, todayISO } from "../calc.js";
 import { STOCK_WINDOW_DAYS } from "../constants.js";
@@ -50,7 +50,7 @@ export async function renderTrangChu() {
       const today = todayISO();
       const rows = await fetchEntriesByRange(today, today);
       const worked = rows.filter((r) => !r.offDay);
-      const totalDoanhThu = worked.reduce((s, r) => s + (r.soLuong || 0) * locationGiaBan(r.locationId), 0);
+      const totalDoanhThu = worked.reduce((s, r) => s + (r.soLuong || 0) * entryGiaBan(r), 0);
       const soNVLam = new Set(worked.map((r) => r.uid)).size;
       statsEl.innerHTML = `
         <div class="hero-stat"><span class="num">${fmt(totalDoanhThu)}</span><span class="label">Doanh thu ước tính hôm nay (tất cả điểm)</span></div>
@@ -62,7 +62,7 @@ export async function renderTrangChu() {
         const locs = activeLocations().filter(([, l]) => l.type === "point");
         byLocEl.innerHTML = locs.length ? locs.map(([id, l]) => {
           const locRows = worked.filter((r) => r.locationId === id);
-          const dt = locRows.reduce((s, r) => s + (r.soLuong || 0) * locationGiaBan(id), 0);
+          const dt = locRows.reduce((s, r) => s + (r.soLuong || 0) * entryGiaBan(r), 0);
           return `<div class="stat-card"><div class="label">${escapeHtml(l.name)}</div><div class="value">${fmt(dt)}</div></div>`;
         }).join("") : emptyState("Chưa có điểm bán nào — vào mục Quản lý để thêm");
       }

@@ -10,7 +10,7 @@ import {
 import { auth, db } from "../firebase-init.js";
 import { $, $$, viewRoot, mount, emptyState, toast, reportError } from "../ui.js";
 import { state, activeLocations, locationName } from "../state.js";
-import { loadLocationsDirectory, loadStaffDirectory } from "../data.js";
+import { loadLocationsDirectory, loadStaffDirectory, logChange } from "../data.js";
 import { escapeHtml, fmt } from "../calc.js";
 
 let editingLocationId = null;
@@ -33,7 +33,9 @@ export async function renderQuanLy() {
     if (!payload.name) { toast("Nhập tên điểm"); return; }
     try {
       if (editingLocationId) {
+        const beforeLoc = state.locationsDirectory[editingLocationId];
         await updateDoc(doc(db, "locations", editingLocationId), payload);
+        logChange("locations", editingLocationId, "update", beforeLoc, payload);
         toast("Đã cập nhật điểm bán");
       } else {
         payload.active = true;
@@ -151,9 +153,11 @@ export async function renderQuanLy() {
       // Sửa thông tin nhân viên có sẵn — không đụng tới email/mật khẩu đăng
       // nhập (đổi email tài khoản người khác cần Admin SDK, app này không có).
       try {
+        const beforeStaff = state.staffDirectory[editingStaffUid];
         await updateDoc(doc(db, "users", editingStaffUid), {
           name, role, locationId: staffLocationId, updatedAt: serverTimestamp(),
         });
+        logChange("users", editingStaffUid, "update", beforeStaff, { name, role, locationId: staffLocationId });
         toast(`Đã cập nhật thông tin: ${name}`);
         resetStaffForm();
         await loadStaffDirectory();
@@ -328,7 +332,9 @@ function renderStaffList() {
       const uid = btn.dataset.toggleActive;
       const cur = state.staffDirectory[uid];
       try {
-        await updateDoc(doc(db, "users", uid), { active: !(cur.active !== false) });
+        const nextActive = !(cur.active !== false);
+        await updateDoc(doc(db, "users", uid), { active: nextActive });
+        logChange("users", uid, "update", cur, { active: nextActive });
         toast("Đã cập nhật trạng thái");
         await loadStaffDirectory();
         renderStaffList();
@@ -343,6 +349,7 @@ function renderStaffList() {
       if (!confirm(`Xoá hồ sơ nhân viên "${u?.name || ""}"? Tài khoản đăng nhập cũ (email) vẫn tồn tại nhưng sẽ không vào được app nữa vì mất hồ sơ/gán điểm bán. Các phiếu chấm công/nhập kho cũ của nhân viên này vẫn được giữ nguyên. Không thể hoàn tác.`)) return;
       try {
         await deleteDoc(doc(db, "users", uid));
+        logChange("users", uid, "delete", u, null);
         if (editingStaffUid === uid) resetStaffForm();
         toast("Đã xoá hồ sơ nhân viên");
         await loadStaffDirectory();
@@ -368,6 +375,7 @@ viewRoot.addEventListener("click", async (e) => {
     if (!confirm(`Xoá điểm bán "${l?.name || ""}"? Chỉ nên xoá nếu điểm này chưa có phiếu chấm công / dữ liệu nào gắn vào.`)) return;
     try {
       await deleteDoc(doc(db, "locations", id));
+      logChange("locations", id, "delete", l, null);
       toast("Đã xoá điểm bán");
       await loadLocationsDirectory();
       renderLocationList();
@@ -391,7 +399,9 @@ viewRoot.addEventListener("click", async (e) => {
     const id = locToggleBtn.dataset.locToggle;
     const l = state.locationsDirectory[id];
     try {
-      await updateDoc(doc(db, "locations", id), { active: !(l.active !== false) });
+      const nextActive = !(l.active !== false);
+      await updateDoc(doc(db, "locations", id), { active: nextActive });
+      logChange("locations", id, "update", l, { active: nextActive });
       toast("Đã cập nhật trạng thái điểm");
       await loadLocationsDirectory();
       renderLocationList();
