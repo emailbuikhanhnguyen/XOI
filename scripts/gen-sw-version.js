@@ -43,6 +43,7 @@ const WATCHED_FILES = [
   "src/screens/thu-chi.js",
   "src/screens/bao-cao.js",
   "src/screens/quan-ly.js",
+  "src/screens/huong-dan.js",
   "firebase-config.js",
   "manifest.webmanifest",
 ];

@@ -7,9 +7,9 @@ import { $, $$, viewRoot, mount, emptyState, toast, reportError, wireReceiptInpu
 import {
   state, isAdmin, isKitchenContext, kitchenLocations, locationName, operatingKitchenId, pointLocations,
 } from "../state.js";
-import { fetchIngredientsByRange, fetchOrdersByRange, fetchTransfersByRange, logChange, saveOp } from "../data.js";
-import { addDays, escapeHtml, fmt, fmtNum, formatDateVN, matchesSearch, normalizeUnit, slugifyItemName, todayISO } from "../calc.js";
-import { DATE_ENTRY_PAST_DAYS, ITEM_SUGGESTIONS, STOCK_WINDOW_DAYS, UNIT_SUGGESTIONS } from "../constants.js";
+import { fetchEntriesByRange, fetchIngredientsByRange, fetchOrdersByRange, fetchTransfersByRange, logChange, saveOp } from "../data.js";
+import { addDays, escapeHtml, fmt, fmtNum, formatDateVN, matchesSearch, normalizeUnit, slugifyItemName, suggestedQtyForWeekday, todayISO } from "../calc.js";
+import { DATE_ENTRY_PAST_DAYS, EXPIRY_WARN_DAYS, FORECAST_LOOKBACK_DAYS, ITEM_SUGGESTIONS, STOCK_WINDOW_DAYS, UNIT_SUGGESTIONS } from "../constants.js";
 
 let ingCacheGlobal = [];
 let transferCacheGlobal = [];
@@ -235,6 +235,11 @@ export async function renderKho() {
       unit: normalizeUnit($("#ing-unit").value),
       qty: parseFloat($("#ing-qty").value) || 0,
       tien: parseFloat($("#ing-tien").value) || 0,
+      hanSuDung: $("#ing-hansudung").value || "",
+      nhaCungCap: $("#ing-ncc").value.trim(),
+      // Chỉ thật sự "còn nợ" khi có ghi tên nhà cung cấp — bỏ trống tên NCC
+      // thì coi như mua lẻ/chợ, không theo dõi công nợ dù có tick nhầm.
+      congNo: !!($("#ing-ncc").value.trim() && $("#ing-congno").checked),
       ghiChu: $("#ing-ghichu").value.trim(),
       updatedAt: serverTimestamp(),
     };
@@ -303,7 +308,7 @@ export async function renderKho() {
     }
   });
 
-  await Promise.all([loadAndRenderKho(opKitchenId), loadAndRenderOrderRequests()]);
+  await Promise.all([loadAndRenderKho(opKitchenId), loadAndRenderOrderRequests(), loadAndRenderPrepSuggestion()]);
 }
 
 function resetIngForm() {
@@ -349,12 +354,27 @@ async function loadAndRenderKho(opKitchenId = operatingKitchenId()) {
     renderStockTableUI();
     renderStockTakeTable(opKitchenId);
     renderStocktakeHistory();
+    renderSupplierDebtTable();
   } catch (err) {
     console.error(err);
     if (ingListEl) ingListEl.innerHTML = emptyState("Không tải được");
     if (trfListEl) trfListEl.innerHTML = emptyState("Không tải được");
     if (stockEl) stockEl.innerHTML = emptyState("Không tải được");
   }
+}
+
+// Hạn dùng GẦN NHẤT còn được ghi nhận cho từng nguyên liệu, từ các lần nhập
+// kho có điền "Hạn sử dụng" (tuỳ chọn). Ước tính đơn giản, KHÔNG theo dõi
+// từng lô/FIFO (app không biết chính xác lô nào còn tồn) — chỉ lấy hạn gần
+// nhất trong lịch sử nhập gần đây để NHẮC NHỞ, không phải số liệu chính xác
+// tuyệt đối cho đúng phần nguyên liệu còn lại.
+function computeNearestExpiryMap() {
+  const map = {};
+  ingCacheGlobal.forEach((r) => {
+    if (!r.hanSuDung) return;
+    if (!map[r.itemName] || r.hanSuDung < map[r.itemName]) map[r.itemName] = r.hanSuDung;
+  });
+  return map;
 }
 
 // Bảng "Tồn kho hiện tại" — tách riêng khỏi loadAndRenderKho để đổi bộ lọc
@@ -382,20 +402,57 @@ function renderStockTableUI() {
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
       <span>Tồn kho ÂM ở ${negativeRows.length} nguyên liệu (chuyển đi nhiều hơn đã nhập — có thể do nhập/chuyển hàng bị sai hoặc thiếu, nên kiểm tra lại lịch sử): ${negativeRows.map((r) => escapeHtml(r.itemName)).join(", ")}.</span>
     </div>` : "";
+  // Sắp/đã hết hạn (chỉ cảnh báo khi còn tồn > 0 — hết hàng rồi thì hạn dùng
+  // không còn ý nghĩa gì nữa).
+  const expiryMap = computeNearestExpiryMap();
+  const expiryCutoff = addDays(todayISO(), EXPIRY_WARN_DAYS);
+  const expiringRows = rows.filter((r) => r.ton > 0 && expiryMap[r.itemName] && expiryMap[r.itemName] <= expiryCutoff);
+  const expiryBannerHtml = expiringRows.length ? `
+    <div class="reminder-banner gold">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+      <span>Sắp/đã hết hạn ${expiringRows.length} nguyên liệu: ${expiringRows.map((r) => `${escapeHtml(r.itemName)} (hạn ${formatDateVN(expiryMap[r.itemName])})`).join(", ")}.</span>
+    </div>` : "";
   stockEl.innerHTML = rows.length ? `
     ${negativeBannerHtml}
     ${lowBannerHtml}
+    ${expiryBannerHtml}
     <table class="data-table">
       <thead><tr><th>Nguyên liệu</th><th>Đơn vị</th><th>Tồn hiện tại</th></tr></thead>
       <tbody>${rows.map((r) => {
         const th = state.itemCatalog[r.itemName]?.threshold;
         const isLow = th && r.ton < th;
         const isNegative = r.ton < 0;
-        return `<tr class="${isNegative ? "stock-row-negative" : (isLow ? "stock-row-low" : "")}"><td>${escapeHtml(r.itemName)}</td><td>${escapeHtml(r.unit)}</td><td><b>${fmtNum(r.ton)}</b>${isNegative ? ` <span class="badge-warn">Tồn âm</span>` : (isLow ? ` <span class="badge-warn">Sắp hết</span>` : "")}</td></tr>`;
+        const isExpiring = r.ton > 0 && expiryMap[r.itemName] && expiryMap[r.itemName] <= expiryCutoff;
+        return `<tr class="${isNegative ? "stock-row-negative" : (isLow ? "stock-row-low" : "")}"><td>${escapeHtml(r.itemName)}</td><td>${escapeHtml(r.unit)}</td><td><b>${fmtNum(r.ton)}</b>${isNegative ? ` <span class="badge-warn">Tồn âm</span>` : (isLow ? ` <span class="badge-warn">Sắp hết</span>` : "")}${isExpiring ? ` <span class="badge-warn">HSD ${formatDateVN(expiryMap[r.itemName])}</span>` : ""}</td></tr>`;
       }).join("")}</tbody>
     </table>
     <p class="hint-text">Tồn kho tính trong ${STOCK_WINDOW_DAYS} ngày gần nhất (nhập − đã chuyển đi).</p>
   ` : emptyState(khoLoaiFilter === "tatca" ? "Chưa có dữ liệu tồn kho" : "Chưa có nguyên liệu nào thuộc nhóm này — đánh dấu phân loại ở mục Kiểm kê kho bên dưới");
+}
+
+// Tổng công nợ còn phải trả từng nhà cung cấp — cộng dồn "tien" của các lần
+// nhập kho có ghi tên nhà cung cấp và đang đánh dấu "Còn nợ" (congNo).
+// Chỉ hiện khu vực này khi thực sự có công nợ, để màn hình gọn khi không
+// dùng tính năng này.
+function renderSupplierDebtTable() {
+  const wrap = $('[data-bind="supplier-debt-wrap"]');
+  const el = $('[data-bind="supplier-debt-table"]');
+  if (!wrap || !el) return;
+  const debts = {};
+  ingCacheGlobal.forEach((r) => {
+    if (!r.congNo || !r.nhaCungCap) return;
+    debts[r.nhaCungCap] = (debts[r.nhaCungCap] || 0) + (r.tien || 0);
+  });
+  const rows = Object.entries(debts).filter(([, tien]) => tien > 0).sort((a, b) => b[1] - a[1]);
+  wrap.hidden = rows.length === 0;
+  if (!rows.length) return;
+  el.innerHTML = `
+    <table class="data-table">
+      <thead><tr><th>Nhà cung cấp</th><th>Còn nợ</th></tr></thead>
+      <tbody>${rows.map(([name, tien]) => `<tr><td>${escapeHtml(name)}</td><td><b>${fmt(tien)}</b></td></tr>`).join("")}</tbody>
+    </table>
+    <p class="hint-text">Bấm "Đánh dấu đã trả" ở dòng tương ứng trong Lịch sử nhập hàng khi đã thanh toán cho nhà cung cấp.</p>
+  `;
 }
 
 // Danh sách các lần điều chỉnh từ Kiểm kê kho gần đây, cho sửa/xoá ngay tại
@@ -687,6 +744,40 @@ async function loadAndRenderOrderRequests() {
   }
 }
 
+// Gợi ý số lượng (soLuong) nên chuẩn bị hôm nay cho từng điểm bán — trung
+// bình các ngày cùng Thứ trong FORECAST_LOOKBACK_DAYS ngày gần nhất (xem
+// suggestedQtyForWeekday() ở calc.js). Tính cho MỌI điểm bán đang hoạt động,
+// không phụ thuộc bếp nào đang được chọn ở trên (1 bếp thường cấp cho nhiều
+// điểm, và bếp nào cũng cần biết cần chuẩn bị bao nhiêu cho mỗi điểm).
+async function loadAndRenderPrepSuggestion() {
+  const el = $('[data-bind="prep-suggestion"]');
+  if (!el) return;
+  el.innerHTML = `<p class="empty-state">Đang tính…</p>`;
+  try {
+    const pLocs = pointLocations();
+    if (!pLocs.length) { el.innerHTML = emptyState("Chưa có điểm bán nào"); return; }
+    const today = todayISO();
+    const from = addDays(today, -FORECAST_LOOKBACK_DAYS);
+    const to = addDays(today, -1);
+    const rows = await fetchEntriesByRange(from, to);
+    el.innerHTML = pLocs.map(([id, l]) => {
+      const rowsForLoc = rows.filter((r) => r.locationId === id);
+      const qty = suggestedQtyForWeekday(rowsForLoc, today, FORECAST_LOOKBACK_DAYS);
+      return `
+        <div class="entry-card">
+          <div class="entry-card-top">
+            <span class="entry-date">${escapeHtml(l.name)}</span>
+            <span class="entry-total">${qty == null ? "Chưa đủ dữ liệu" : fmtNum(qty) + " phần"}</span>
+          </div>
+        </div>
+      `;
+    }).join("");
+  } catch (err) {
+    console.error(err);
+    el.innerHTML = emptyState("Không tính được gợi ý");
+  }
+}
+
 function renderIngCards(rows) {
   if (!rows.length) return "";
   return rows.map((r) => `
@@ -697,11 +788,14 @@ function renderIngCards(rows) {
       </div>
       <div class="entry-meta">
         <span>${escapeHtml(r.itemName)}: <b>${fmtNum(r.qty)} ${escapeHtml(r.unit)}</b></span>
+        ${r.hanSuDung ? `<span>HSD: ${formatDateVN(r.hanSuDung)}</span>` : ""}
+        ${r.nhaCungCap ? `<span>NCC: ${escapeHtml(r.nhaCungCap)}${r.congNo ? ` <span class="badge-unpaid">Còn nợ</span>` : ` <span class="badge-paid">Đã trả</span>`}</span>` : ""}
       </div>
       ${r.ghiChu ? `<div class="entry-note">${escapeHtml(r.ghiChu)}</div>` : ""}
       ${receiptThumbHtml(r.anhHoaDon)}
       <div class="entry-row-actions">
         <button class="link-btn" data-ing-edit="${r.id}">Sửa</button>
+        ${r.congNo ? `<button class="link-btn" data-ing-paid="${r.id}">Đánh dấu đã trả</button>` : ""}
         <button class="link-btn danger" data-ing-del="${r.id}">Xoá</button>
       </div>
     </div>
@@ -786,6 +880,9 @@ viewRoot.addEventListener("click", async (e) => {
     $("#ing-unit").value = row.unit || "kg";
     $("#ing-qty").value = row.qty || "";
     $("#ing-tien").value = row.tien || "";
+    $("#ing-hansudung").value = row.hanSuDung || "";
+    $("#ing-ncc").value = row.nhaCungCap || "";
+    $("#ing-congno").checked = !!row.congNo;
     $("#ing-ghichu").value = row.ghiChu || "";
     ingReceiptCtl?.set(row.anhHoaDon || "");
     $("#btn-ing-cancel").hidden = false;
@@ -801,6 +898,19 @@ viewRoot.addEventListener("click", async (e) => {
       toast("Đã xoá");
       await loadAndRenderKho();
     } catch (err) { reportError(err, "Không xoá được"); }
+  }
+
+  const ingPaidBtn = e.target.closest("[data-ing-paid]");
+  if (ingPaidBtn) {
+    const id = ingPaidBtn.dataset.ingPaid;
+    const row = ingCacheGlobal.find((r) => r.id === id);
+    if (!row) return;
+    try {
+      await updateDoc(doc(db, "ingredients", id), { congNo: false });
+      logChange("ingredients", id, "update", row, { congNo: false });
+      toast(`Đã đánh dấu đã trả: ${row.nhaCungCap || ""}`);
+      await loadAndRenderKho();
+    } catch (err) { reportError(err, "Không cập nhật được: " + (err.message || "")); }
   }
 
   const trfEditBtn = e.target.closest("[data-trf-edit]");

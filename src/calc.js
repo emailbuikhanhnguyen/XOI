@@ -66,6 +66,26 @@ export function weekdayLabel(dateStr) {
   return WEEKDAY[new Date(dateStr + "T00:00:00").getDay()];
 }
 
+// Ước tính số lượng (soLuong) nên chuẩn bị cho 1 điểm bán vào ngày `dateStr`:
+// trung bình soLuong của các phiếu chấm công KHÔNG nghỉ, cùng ngày trong
+// tuần (cùng Thứ) với `dateStr`, trong `lookbackDays` ngày TRƯỚC đó (không
+// tính chính ngày `dateStr`). `entriesForLocation` phải là các phiếu ĐÃ lọc
+// sẵn theo đúng 1 điểm bán (hàm này không tự lọc locationId). Trả về null
+// nếu chưa có phiếu nào cùng Thứ trong khoảng đã xét — cố tình KHÔNG suy đoán
+// liều lĩnh (vd trả về 0) khi chưa có đủ dữ liệu lịch sử.
+export function suggestedQtyForWeekday(entriesForLocation, dateStr, lookbackDays = 28) {
+  const label = weekdayLabel(dateStr);
+  const cutoff = addDays(dateStr, -lookbackDays);
+  const matches = entriesForLocation.filter((r) => {
+    if (r.offDay) return false;
+    if (r.date >= dateStr || r.date < cutoff) return false;
+    return weekdayLabel(r.date) === label;
+  });
+  if (!matches.length) return null;
+  const total = matches.reduce((s, r) => s + (r.soLuong || 0), 0);
+  return Math.round(total / matches.length);
+}
+
 export function formatDateVN(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
   return `${weekdayLabel(dateStr)}, ${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;

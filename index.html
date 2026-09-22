@@ -59,6 +59,9 @@
     </div>
     <div class="topbar-right">
       <span id="user-chip" class="user-chip"></span>
+      <button id="btn-help" class="icon-btn" title="Hướng dẫn sử dụng" aria-label="Hướng dẫn sử dụng">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      </button>
       <button id="btn-logout" class="icon-btn" title="Đăng xuất" aria-label="Đăng xuất">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
       </button>
@@ -111,6 +114,7 @@
     </div>
     <div class="section-block" data-bind="quick-actions"></div>
     <div class="stat-grid" data-bind="home-by-location"></div>
+    <div data-bind="location-leaderboard"></div>
 
     <div data-bind="attendance-block" hidden>
       <div class="section-row">
@@ -236,6 +240,10 @@
     <div data-bind="kho-manage" hidden>
       <div class="ticket" style="margin-bottom:12px;" data-bind="kitchen-select"></div>
 
+      <h3 class="section-heading">Gợi ý chuẩn bị hôm nay</h3>
+      <p class="hint-text">Ước tính theo số lượng bán trung bình các ngày cùng Thứ gần đây — chỉ mang tính tham khảo, không thay thế kinh nghiệm thực tế.</p>
+      <div class="stack" data-bind="prep-suggestion"></div>
+
       <h3 class="section-heading">Yêu cầu nguyên liệu từ điểm bán</h3>
       <div class="stack" data-bind="order-requests-list"></div>
 
@@ -265,6 +273,20 @@
             <input type="number" inputmode="numeric" id="ing-tien" min="0" step="1000" />
           </label>
         </div>
+        <div class="grid-2">
+          <label class="field">
+            <span>Hạn sử dụng (tuỳ chọn)</span>
+            <input type="date" id="ing-hansudung" />
+          </label>
+          <label class="field">
+            <span>Nhà cung cấp (tuỳ chọn)</span>
+            <input type="text" id="ing-ncc" placeholder="VD: Vựa gạo Cô Ba" />
+          </label>
+        </div>
+        <label class="field-check">
+          <input type="checkbox" id="ing-congno" />
+          <span>Còn nợ nhà cung cấp (chưa trả tiền)</span>
+        </label>
         <label class="field">
           <span>Ghi chú</span>
           <input type="text" id="ing-ghichu" placeholder="VD: đã thanh toán" />
@@ -286,6 +308,11 @@
       <div class="search-row"><input type="search" id="ing-search" placeholder="Tìm theo tên nguyên liệu / ghi chú…" /></div>
       <div class="stack" data-bind="ing-list"></div>
       <button type="button" class="btn btn-ghost btn-loadmore" data-bind="ing-list-more" hidden>Xem thêm</button>
+
+      <div data-bind="supplier-debt-wrap" hidden>
+        <h3 class="section-heading">Công nợ nhà cung cấp</h3>
+        <div class="table-wrap" data-bind="supplier-debt-table"></div>
+      </div>
 
       <form id="form-trf" class="ticket ticket-form" style="margin-top:18px;">
         <p class="eyebrow">Chuyển hàng cho điểm bán</p>
@@ -576,6 +603,227 @@
       </div>
     </form>
     <div class="stack" data-bind="staff-list"></div>
+  </section>
+</template>
+
+<template id="tpl-huong-dan">
+  <section class="view">
+    <div class="ticket ticket-hero">
+      <p class="eyebrow">Hướng dẫn</p>
+      <h2 class="hero-date">Cách dùng Sổ Xôi</h2>
+      <p style="margin:0; font-size:13.5px; line-height:1.6; color:rgba(255,252,245,0.92);">
+        Bấm vào từng mục bên dưới để xem chi tiết. Không cần hỏi chủ quán — tự
+        tra ở đây trước, phần nào máy vẫn không rõ thì mới cần hỏi thêm.
+      </p>
+    </div>
+
+    <details class="ticket help-card" open>
+      <summary>1. Tổng quan chung</summary>
+      <div class="help-body">
+        <p>Sổ Xôi dùng để ghi chấm công/doanh số, quản lý kho nguyên liệu, chuyển
+        hàng giữa bếp trung tâm và các điểm bán, thu chi, và báo cáo doanh thu —
+        thay cho sổ tay giấy.</p>
+        <p>App có 2 vai trò:</p>
+        <ul>
+          <li><strong>Nhân viên</strong>: chỉ thấy 3 mục dưới cùng màn hình —
+          <em>Trang chủ, Chấm công, Kho</em>. Chỉ thao tác được cho điểm/bếp mình
+          đang làm việc.</li>
+          <li><strong>Chủ quán (quản trị)</strong>: thấy đủ 6 mục, gồm thêm
+          <em>Thu chi, Báo cáo, Quản lý</em>, và xem được số liệu của mọi
+          điểm bán.</li>
+        </ul>
+        <p>Điều hướng bằng thanh menu dưới cùng màn hình. Góc trên bên phải có
+        biểu tượng đăng xuất; nếu bạn thấy nút <strong>?</strong> cạnh đó thì đó
+        chính là menu hướng dẫn này.</p>
+        <p><strong>Dùng được cả khi mất mạng</strong>: khi không có Internet, app
+        vẫn cho nhập phiếu bình thường (có dải màu báo "Mất kết nối mạng" phía
+        trên), dữ liệu tự đồng bộ lên khi có mạng lại — không cần nhập lại.</p>
+      </div>
+    </details>
+
+    <details class="ticket help-card">
+      <summary>2. Đăng nhập, quên mật khẩu, đăng xuất</summary>
+      <div class="help-body">
+        <p><strong>Đăng nhập</strong>: dùng email + mật khẩu do chủ quán tạo cho
+        bạn (mục Quản lý &gt; Nhân viên). Chưa có tài khoản thì nhờ chủ quán tạo,
+        không tự đăng ký được.</p>
+        <p><strong>Lần đầu nhận tài khoản</strong>: hệ thống gửi email cho bạn tự
+        đặt mật khẩu — kiểm tra cả hộp thư rác (spam) nếu không thấy email.</p>
+        <p><strong>Quên mật khẩu</strong>: ở màn đăng nhập, bấm "Quên mật khẩu?",
+        nhập email, hệ thống gửi link đặt lại mật khẩu qua email đó.</p>
+        <p><strong>Đăng xuất</strong>: bấm biểu tượng cửa ở góc trên bên phải màn
+        hình.</p>
+      </div>
+    </details>
+
+    <details class="ticket help-card">
+      <summary>3. Trang chủ</summary>
+      <div class="help-body">
+        <p>Hiện nhanh tình hình hôm nay: số liệu tổng hợp (doanh số/lương/thưởng
+        tuỳ vai trò), các nút thao tác nhanh, và danh sách phiếu gần đây.</p>
+        <p>Nếu quán có từ 2 điểm bán trở lên, có thêm bảng <strong>"Xếp hạng
+        điểm bán tuần này"</strong> — xếp theo doanh thu tuần hiện tại (tính từ
+        Thứ Hai), giúp anh em biết điểm nào đang bán tốt.</p>
+        <p>Chủ quán còn thấy thêm khối <strong>"Điểm danh chấm công"</strong> —
+        xem nhanh điểm/nhân viên nào đã chấm công ngày đang chọn, điểm/nhân viên
+        nào chưa.</p>
+      </div>
+    </details>
+
+    <details class="ticket help-card">
+      <summary>4. Chấm công</summary>
+      <div class="help-body">
+        <p>Mỗi ngày làm việc, tạo 1 <strong>phiếu chấm công</strong> mới:</p>
+        <ul>
+          <li>Chọn ngày (mặc định hôm nay, chỉ chọn được trong khoảng gần đây,
+          không chọn được ngày tương lai).</li>
+          <li>Nếu hôm đó nghỉ, tick <strong>"Nghỉ hôm nay"</strong> — các ô
+          lương/số lượng/thưởng sẽ ẩn đi, không cần điền.</li>
+          <li>Nếu đi làm: điền lương cơ bản, số lượng bán, thưởng, tổng tiền, số
+          đơn ship, số xôi ship/dẹp — ghi chú thêm nếu cần (VD: tiền thối, đổi
+          ca...).</li>
+        </ul>
+        <p>App tự chặn <strong>tạo 2 phiếu cùng ngày cho cùng 1 điểm/nhân viên</strong>
+        — nếu thấy báo lỗi trùng ngày, nghĩa là hôm đó đã có phiếu rồi, vào phần
+        Lịch sử bên dưới để sửa phiếu cũ thay vì tạo phiếu mới.</p>
+        <p>Phần <strong>Lịch sử</strong> phía dưới cho xem lại/sửa/xoá các phiếu
+        đã lưu, lọc theo 7 ngày / 30 ngày / 3 tháng, và tìm theo tên hoặc ghi
+        chú.</p>
+      </div>
+    </details>
+
+    <details class="ticket help-card">
+      <summary>5. Kho &amp; Chuyển hàng — dành cho điểm bán</summary>
+      <div class="help-body">
+        <p>Nếu tài khoản của bạn gắn với 1 <em>điểm bán</em>, màn Kho sẽ hiện:</p>
+        <ul>
+          <li><strong>Nguyên vật liệu dùng cho điểm bán</strong>: xem nhanh
+          những gì điểm đang có.</li>
+          <li><strong>Đặt hàng nguyên liệu từ bếp</strong>: gửi yêu cầu bếp
+          trung tâm chuẩn bị nguyên liệu/mặt hàng gì, ngày cần, số lượng — bếp sẽ
+          thấy yêu cầu này ở màn Kho của họ.</li>
+          <li><strong>Đơn đã đặt</strong>: theo dõi các yêu cầu mình đã gửi, còn
+          chờ hay đã được xử lý.</li>
+          <li><strong>Đã nhận từ bếp trung tâm</strong>: lịch sử các lần bếp
+          chuyển hàng xuống điểm mình.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="ticket help-card">
+      <summary>6. Kho &amp; Chuyển hàng — dành cho bếp trung tâm</summary>
+      <div class="help-body">
+        <p>Nếu tài khoản gắn với <em>bếp trung tâm</em> (hoặc bạn là chủ quán),
+        màn Kho có đầy đủ các phần quản lý:</p>
+        <p><strong>Gợi ý chuẩn bị hôm nay</strong>: app tự ước tính mỗi điểm bán
+        nên chuẩn bị bao nhiêu, dựa trên trung bình số lượng bán các ngày
+        <em>cùng Thứ</em> trong khoảng gần đây (VD: gợi ý cho Thứ Ba lấy trung
+        bình các Thứ Ba trước đó). Chỉ là <strong>tham khảo</strong>, không thay
+        thế kinh nghiệm thực tế — điểm mới mở hoặc chưa đủ dữ liệu sẽ chưa có gợi
+        ý.</p>
+        <p><strong>Yêu cầu nguyên liệu từ điểm bán</strong>: xem các đơn điểm
+        bán vừa gửi lên.</p>
+        <p><strong>Nhập nguyên liệu vào bếp</strong>: mỗi lần mua nguyên liệu về,
+        tạo 1 phiếu nhập gồm tên, số lượng, đơn vị, thành tiền. Có thêm 2 ô tuỳ
+        chọn:</p>
+        <ul>
+          <li><strong>Hạn sử dụng</strong>: nếu điền, app sẽ tự cảnh báo khi
+          nguyên liệu đó sắp hết hạn (còn ≤ 3 ngày) ở bảng "Tồn kho hiện tại"
+          bên dưới.</li>
+          <li><strong>Nhà cung cấp</strong> + tick <strong>"Còn nợ nhà cung
+          cấp"</strong>: nếu mua nợ chưa trả tiền ngay, điền tên nhà cung cấp và
+          tick ô này — khoản này sẽ tự cộng vào bảng "Công nợ nhà cung cấp".</li>
+        </ul>
+        <p>Có thể đính kèm ảnh hoá đơn. Phần <strong>Lịch sử nhập hàng</strong>
+        cho sửa/xoá lại các phiếu đã lưu.</p>
+        <p><strong>Công nợ nhà cung cấp</strong>: bảng này chỉ hiện khi có
+        khoản nợ chưa trả — gộp theo từng nhà cung cấp, tổng tiền còn nợ. Ở
+        từng phiếu nhập hàng đang nợ, bấm <strong>"Đánh dấu đã trả"</strong> khi
+        đã thanh toán xong, khoản đó sẽ hết tính vào công nợ.</p>
+        <p><strong>Chuyển hàng cho điểm bán</strong>: khi bếp chuẩn bị xong, tạo
+        phiếu chuyển hàng — chọn điểm bán nhận, mặt hàng, số lượng. Phiếu này sẽ
+        hiện bên "Đã nhận từ bếp trung tâm" ở màn Kho của điểm bán đó.</p>
+        <p><strong>Tồn kho hiện tại</strong>: bảng tổng hợp còn bao nhiêu mỗi
+        nguyên liệu, lọc theo "Sản xuất"/"Điểm bán". Dòng nào tồn kho thấp hoặc
+        <strong>âm</strong> (nhập/chuyển vượt quá số thực tế có — thường do nhập
+        nhầm số) sẽ được tô màu cảnh báo.</p>
+        <p><strong>Kiểm kê kho</strong>: bấm nút này khi cần đối chiếu tồn kho
+        thực tế (mới bắt đầu dùng app, hoặc kiểm kê định kỳ). Nhập số đếm được
+        thực tế cho từng nguyên liệu, app tự tính chênh lệch và ghi phiếu điều
+        chỉnh — không cần tự tính tay.</p>
+      </div>
+    </details>
+
+    <details class="ticket help-card">
+      <summary>7. Thu &amp; chi (chỉ chủ quán)</summary>
+      <div class="help-body">
+        <p>Ghi các khoản thu/chi ngoài doanh thu bán xôi hàng ngày — VD: tiền
+        mặt bằng, điện nước, sửa chữa, marketing... Chọn loại (thu/chi), ngày,
+        danh mục, số tiền, điểm liên quan (nếu có), có thể đính kèm ảnh hoá đơn.</p>
+        <p>Phía dưới có bộ lọc theo khoảng ngày/loại/điểm, các nút lọc nhanh
+        "Tuần này/Tháng này/7 ngày", và danh sách giao dịch có thể tìm kiếm,
+        sửa, xoá.</p>
+      </div>
+    </details>
+
+    <details class="ticket help-card">
+      <summary>8. Báo cáo (chỉ chủ quán)</summary>
+      <div class="help-body">
+        <p>Chọn khoảng ngày và điểm bán muốn xem, gồm:</p>
+        <ul>
+          <li>Tổng hợp số liệu chung, doanh thu/lợi nhuận theo từng điểm bán,
+          theo từng nhân viên.</li>
+          <li>Biểu đồ doanh thu/lợi nhuận theo tháng.</li>
+          <li><strong>Quyết toán theo tuần</strong>: mỗi phiếu là tổng lương 1
+          tuần của 1 nhân viên — tick "Đã thanh toán tuần này" sau khi trả
+          lương xong để theo dõi tuần nào đã trả, tuần nào chưa (lọc bằng 3 nút
+          Tất cả/Chưa thanh toán/Đã thanh toán). Chỉ hiện các tuần có phiếu
+          chấm công trong khoảng ngày đang lọc phía trên — chọn khoảng rộng hơn
+          (VD "Tháng này") để thấy nhiều tuần cùng lúc.</li>
+        </ul>
+        <p>Cuối trang có nút <strong>Xuất CSV</strong> (mở bằng Excel) và
+        <strong>Xuất PDF</strong> để lưu/in báo cáo.</p>
+      </div>
+    </details>
+
+    <details class="ticket help-card">
+      <summary>9. Quản lý (chỉ chủ quán)</summary>
+      <div class="help-body">
+        <p><strong>Điểm bán &amp; bếp trung tâm</strong>: thêm/sửa từng điểm —
+        tên, loại (Bếp trung tâm hoặc Điểm bán), địa chỉ, giá bán mỗi phần xôi
+        (dùng để tính doanh thu tự động ở Báo cáo/Trang chủ), lương cơ bản mặc
+        định mỗi ngày.</p>
+        <p><strong>Nhân viên</strong>: tạo tài khoản mới cho nhân viên — họ tên,
+        email đăng nhập, vai trò (Nhân viên hoặc Chủ quán), điểm làm việc. Không
+        cần đặt mật khẩu tạm, hệ thống tự gửi email cho nhân viên tự đặt mật khẩu
+        lần đầu đăng nhập.</p>
+        <p>Có 2 nút "Xoá tất cả điểm TEST" / "Dọn toàn bộ dữ liệu TEST" — chỉ
+        dùng khi đang thử nghiệm app, <strong>không bấm khi đã có dữ liệu thật
+        đang dùng</strong> vì sẽ xoá dữ liệu test đã tạo trước đó.</p>
+      </div>
+    </details>
+
+    <details class="ticket help-card">
+      <summary>10. Câu hỏi thường gặp / Xử lý sự cố</summary>
+      <div class="help-body">
+        <p><strong>Không đăng nhập được?</strong> Kiểm tra đúng email, thử
+        "Quên mật khẩu?" để đặt lại. Vẫn không được thì nhờ chủ quán kiểm tra
+        tài khoản trong mục Quản lý.</p>
+        <p><strong>Nhập phiếu mà không thấy lưu / báo lỗi mạng?</strong> App vẫn
+        lưu tạm trên máy và tự đồng bộ khi có mạng lại — cứ tiếp tục dùng bình
+        thường, đừng nhập lại nhiều lần. Nếu dải báo "Mất kết nối mạng" biến mất
+        nghĩa là đã có mạng lại.</p>
+        <p><strong>Không thấy mục Thu chi / Báo cáo / Quản lý?</strong> 3 mục
+        này chỉ dành cho chủ quán (quản trị) — tài khoản nhân viên sẽ không thấy.</p>
+        <p><strong>Không sửa/xoá được 1 phiếu nào đó?</strong> Thường do phiếu
+        đó do người khác tạo hoặc đã quá cũ — liên hệ chủ quán để được hỗ trợ
+        sửa/xoá.</p>
+        <p><strong>Số liệu hiển thị có vẻ sai/cũ?</strong> Thử tải lại trang
+        (kéo màn hình xuống hoặc bấm nút tải lại của trình duyệt). App luôn ưu
+        tiên tải bản mới nhất khi có mạng.</p>
+        <p>Vẫn còn thắc mắc thì hỏi trực tiếp chủ quán hoặc người quản lý app.</p>
+      </div>
+    </details>
   </section>
 </template>
 

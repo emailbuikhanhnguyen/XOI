@@ -85,6 +85,45 @@ export async function renderTrangChu() {
     console.error(err);
     statsEl.innerHTML = `<div class="hero-stat"><span class="num">—</span><span class="label">Lỗi tải dữ liệu</span></div>`;
   }
+  await renderLocationLeaderboard();
+}
+
+// Xếp hạng các điểm bán theo doanh thu TUẦN NÀY (Thứ 2 - hôm nay) — hiện cho
+// MỌI người dùng (kể cả nhân viên), không riêng chủ quán, để tạo động lực
+// nhẹ nhàng giữa các điểm bán với nhau. Cố ý im lặng khi lỗi (chỉ
+// console.error): đây chỉ là 1 khối phụ mang tính động viên trên Trang chủ,
+// lỗi ở đây không nên làm phiền hay che mất phần thống kê chính phía trên.
+async function renderLocationLeaderboard() {
+  const el = $('[data-bind="location-leaderboard"]');
+  if (!el) return;
+  const pLocs = activeLocations().filter(([, l]) => l.type === "point");
+  if (pLocs.length < 2) { el.innerHTML = ""; return; } // chỉ 0-1 điểm thì "xếp hạng" không có ý nghĩa gì
+  try {
+    const weekStart = mondayOf(todayISO());
+    const rows = await fetchEntriesByRange(weekStart, todayISO());
+    const worked = rows.filter((r) => !r.offDay);
+    const totals = pLocs.map(([id, l]) => {
+      const locRows = worked.filter((r) => r.locationId === id);
+      const doanhThu = locRows.reduce((s, r) => s + (r.soLuong || 0) * entryGiaBan(r), 0);
+      return { name: l.name, doanhThu };
+    }).sort((a, b) => b.doanhThu - a.doanhThu);
+    el.innerHTML = `
+      <h3 class="section-heading">Xếp hạng điểm bán tuần này</h3>
+      <div class="stack">
+        ${totals.map((t, i) => `
+          <div class="entry-card">
+            <div class="entry-card-top">
+              <span class="entry-date">#${i + 1} · ${escapeHtml(t.name)}</span>
+              <span class="entry-total">${fmt(t.doanhThu)}</span>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  } catch (err) {
+    console.error(err);
+    el.innerHTML = "";
+  }
 }
 
 // Nhắc nhở trong app khi mở Trang chủ (chủ quán): nhân viên chưa chấm công

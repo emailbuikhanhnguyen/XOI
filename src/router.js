@@ -7,11 +7,15 @@ import { renderKho } from "./screens/kho.js";
 import { renderThuChi } from "./screens/thu-chi.js";
 import { renderBaoCao } from "./screens/bao-cao.js";
 import { renderQuanLy } from "./screens/quan-ly.js";
+import { renderHuongDan } from "./screens/huong-dan.js";
 
 const ADMIN_ONLY = ["bao-cao", "quan-ly", "thu-chi"];
+// "huong-dan" (menu Hướng dẫn sử dụng) CỐ TÌNH không nằm trong ADMIN_ONLY —
+// nhân viên cũng cần tự tra cứu cách dùng app, không riêng gì chủ quán.
 const TITLES = {
   "trang-chu": "Trang chủ", "cham-cong": "Chấm công", "kho": "Kho & Chuyển hàng",
   "thu-chi": "Thu & chi", "bao-cao": "Báo cáo", "quan-ly": "Quản lý",
+  "huong-dan": "Hướng dẫn sử dụng",
 };
 
 window.addEventListener("hashchange", router);
@@ -38,4 +42,5 @@ export function router() {
   else if (view === "thu-chi") renderThuChi();
   else if (view === "bao-cao") renderBaoCao();
   else if (view === "quan-ly") renderQuanLy();
+  else if (view === "huong-dan") renderHuongDan();
 }

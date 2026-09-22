@@ -29,6 +29,10 @@ $("#form-login").addEventListener("submit", async (e) => {
 
 $("#btn-logout").addEventListener("click", () => signOut(auth));
 
+// Nút "?" mở menu Hướng dẫn sử dụng — không phải mục trong thanh nav dưới
+// (đỡ chật chỗ 6 mục sẵn có), nên điều hướng thẳng qua đổi hash.
+$("#btn-help").addEventListener("click", () => { location.hash = "#/huong-dan"; });
+
 $("#btn-forgot-password").addEventListener("click", async () => {
   const email = ($("#login-email").value || "").trim();
   if (!email) { toast("Nhập email của bạn ở ô Email trước, rồi bấm Quên mật khẩu lần nữa"); return; }

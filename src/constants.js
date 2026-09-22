@@ -11,6 +11,15 @@ export const STOCK_WINDOW_DAYS = 365; // khoảng thời gian dùng để tính 
 // tương lai gần, không phải ghi nhận việc đã xảy ra.
 export const DATE_ENTRY_PAST_DAYS = 30;
 
+// Số ngày lịch sử dùng để ước tính "gợi ý chuẩn bị hôm nay" cho từng điểm
+// bán (trung bình soLuong các ngày cùng Thứ trong khoảng này) — xem
+// suggestedQtyForWeekday() ở calc.js.
+export const FORECAST_LOOKBACK_DAYS = 28;
+
+// Trong vòng bao nhiêu ngày tới thì coi là "sắp hết hạn" và cảnh báo ở bảng
+// Tồn kho hiện tại (nguyên liệu có ghi hạn sử dụng khi nhập kho).
+export const EXPIRY_WARN_DAYS = 3;
+
 export const ITEM_SUGGESTIONS = ["Gà", "Nấm", "Gạo nếp", "Đậu xanh", "Dầu ăn", "Hành phi", "Gia vị", "Nước tương", "Túi/hộp gói"];
 
 // Gợi ý đơn vị — chỉ là gợi ý trong ô nhập tự do (list=datalist), người dùng

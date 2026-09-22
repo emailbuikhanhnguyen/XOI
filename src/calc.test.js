@@ -14,6 +14,7 @@ import {
   slugifyItemName,
   avgUnitCostMap,
   isDateInAllowedRange,
+  suggestedQtyForWeekday,
 } from "./calc.js";
 
 describe("fmt / fmtNum", () => {
@@ -98,6 +99,34 @@ describe("isDateInAllowedRange", () => {
   it("từ chối giá trị rỗng/undefined", () => {
     expect(isDateInAllowedRange("", today, 30)).toBe(false);
     expect(isDateInAllowedRange(undefined, today, 30)).toBe(false);
+  });
+});
+
+describe("suggestedQtyForWeekday", () => {
+  // 2026-09-22 là Thứ Ba; các Thứ Ba trước đó trong 28 ngày: 09-15, 09-08, 09-01.
+  const rows = [
+    { date: "2026-09-15", soLuong: 100, offDay: false }, // Thứ Ba
+    { date: "2026-09-08", soLuong: 120, offDay: false }, // Thứ Ba
+    { date: "2026-09-01", soLuong: 80, offDay: false }, // Thứ Ba
+    { date: "2026-09-16", soLuong: 999, offDay: false }, // Thứ Tư — khác thứ, phải bỏ qua
+    { date: "2026-08-25", soLuong: 0, offDay: true }, // Thứ Ba, còn trong 28 ngày, nhưng nghỉ — phải bỏ qua
+  ];
+
+  it("tính trung bình soLuong các phiếu cùng Thứ trong khoảng lookback, bỏ qua ngày nghỉ và khác thứ", () => {
+    expect(suggestedQtyForWeekday(rows, "2026-09-22", 28)).toBe(100); // (100+120+80)/3
+  });
+
+  it("không tính chính ngày đang xét (dù trùng ngày trong dữ liệu)", () => {
+    const withToday = [...rows, { date: "2026-09-22", soLuong: 99999, offDay: false }];
+    expect(suggestedQtyForWeekday(withToday, "2026-09-22", 28)).toBe(100);
+  });
+
+  it("trả về null khi chưa có phiếu nào cùng Thứ trong khoảng xét (không suy đoán liều)", () => {
+    expect(suggestedQtyForWeekday([], "2026-09-22", 28)).toBeNull();
+  });
+
+  it("chỉ xét trong đúng số ngày lookback được truyền vào", () => {
+    expect(suggestedQtyForWeekday(rows, "2026-09-22", 7)).toBe(100); // chỉ còn 09-15 trong 7 ngày
   });
 });
 
