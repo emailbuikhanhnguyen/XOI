@@ -20,6 +20,16 @@ function currentEntryLocationId() {
   return state.staffDirectory[entryTargetUid]?.locationId ?? state.profile.locationId;
 }
 
+// Tổng (đ) = Lương cơ bản + Thưởng, tự tính lại mỗi khi 1 trong 2 ô đổi giá
+// trị. Tách ra module-scope (thay vì khai báo trong renderChamCong()) để
+// resetEntryForm() cũng gọi lại được sau khi điền lại giá trị mặc định.
+function recalcTong() {
+  const luongEl = $("#entry-luong"), thuongEl = $("#entry-thuong"), tongEl = $("#entry-tong");
+  if (!luongEl || !thuongEl || !tongEl) return;
+  const l = parseFloat(luongEl.value) || 0, t = parseFloat(thuongEl.value) || 0;
+  tongEl.value = l + t;
+}
+
 export async function renderChamCong() {
   mount("cham-cong");
   editingEntryId = null;
@@ -83,13 +93,15 @@ export async function renderChamCong() {
     $$("input", workFields).forEach((i) => (i.disabled = offEl.checked));
   });
 
-  const luongEl = $("#entry-luong"), thuongEl = $("#entry-thuong"), tongEl = $("#entry-tong");
-  function recalcTong() {
-    const l = parseFloat(luongEl.value) || 0, t = parseFloat(thuongEl.value) || 0;
-    tongEl.value = l + t;
-  }
+  const luongEl = $("#entry-luong"), thuongEl = $("#entry-thuong");
   luongEl.addEventListener("input", recalcTong);
   thuongEl.addEventListener("input", recalcTong);
+  // Gọi ngay 1 lần khi mở màn hình: ô Lương cơ bản đã được điền sẵn giá trị
+  // mặc định ở trên (dòng $("#entry-luong").value = ...) bằng JS trực tiếp,
+  // KHÔNG bắn sự kiện "input" — nếu không gọi tay ở đây, ô Tổng sẽ đứng yên ở
+  // 0 cho tới khi người dùng tự gõ lại vào ô Lương/Thưởng thì "Tổng" mới
+  // "nhảy" theo. Đây chính là lỗi "phiếu lương không nhảy" khi mở phiếu mới.
+  recalcTong();
 
   $("#btn-entry-cancel").addEventListener("click", () => resetEntryForm());
 
@@ -116,7 +128,7 @@ export async function renderChamCong() {
       luong: off ? 0 : (parseFloat(luongEl.value) || 0),
       soLuong: off ? 0 : (parseInt($("#entry-soluong").value) || 0),
       thuong: off ? 0 : (parseFloat(thuongEl.value) || 0),
-      tong: off ? 0 : (parseFloat(tongEl.value) || 0),
+      tong: off ? 0 : (parseFloat($("#entry-tong").value) || 0),
       ship: off ? 0 : (parseInt($("#entry-ship").value) || 0),
       dep: off ? 0 : (parseInt($("#entry-dep").value) || 0),
       ghiChu: $("#entry-ghichu").value.trim(),
@@ -190,6 +202,7 @@ function resetEntryForm() {
   $("#entry-date").min = addDays(todayISO(), -DATE_ENTRY_PAST_DAYS);
   $("#entry-date").value = todayISO();
   $("#entry-luong").value = state.locationsDirectory[currentEntryLocationId()]?.luongMacDinh ?? state.settings.luongMacDinh ?? "";
+  recalcTong(); // lương vừa được điền lại mặc định bằng JS — tính lại Tổng ngay, không chờ người dùng gõ
   $("#btn-entry-cancel").hidden = true;
   $$("input", $("#entry-work-fields")).forEach((i) => (i.disabled = false));
 }
