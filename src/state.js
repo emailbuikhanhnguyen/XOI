@@ -1,3 +1,4 @@
+import { entryChannel, hasPayroll, payrollEntry, salesQuantity } from "./calc.js";
 // STATE dùng chung xuyên suốt nhiều màn hình (trước đây là các biến `let`
 // rời rạc ở đầu app.js). Gom vào 1 object `state` duy nhất vì với ES module
 // gốc (không bundler), các module khác import biến `let` thì KHÔNG thể gán
@@ -40,3 +41,8 @@ export function operatingKitchenId() {
   return list.length ? list[0][0] : null;
 }
 export function isKitchenContext() { return isAdmin() || myLocation()?.type === "kitchen"; }
+
+export function channelOf(r) { return entryChannel(r, state.locationsDirectory); }
+export function paysWages(r) { return hasPayroll(r, state.locationsDirectory); }
+export function withPayroll(r) { return payrollEntry(r, state.locationsDirectory); }
+export function soldQty(r) { return salesQuantity(r, state.locationsDirectory); }

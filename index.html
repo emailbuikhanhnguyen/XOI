@@ -145,6 +145,7 @@
           <span>Nghỉ hôm nay</span>
         </label>
       </div>
+      <p class="hint-text" data-bind="entry-channel-note"></p>
       <div class="grid-2" id="entry-work-fields">
         <label class="field">
           <span>Lương cơ bản (đ)</span>
@@ -160,7 +161,7 @@
         </label>
         <label class="field">
           <span>Tổng (đ)</span>
-          <input type="number" inputmode="numeric" id="entry-tong" min="0" step="1000" />
+          <input type="number" inputmode="numeric" id="entry-tong" readonly min="0" step="1000" />
         </label>
         <label class="field">
           <span>Số đơn ship</span>
@@ -463,6 +464,7 @@
         </label>
       </div>
       <div class="chip-row" id="tc-presets">
+        <button type="button" class="chip" data-preset="today">Hôm nay</button>
         <button type="button" class="chip" data-preset="week">Tuần này</button>
         <button type="button" class="chip" data-preset="month">Tháng này</button>
         <button type="button" class="chip" data-preset="7">7 ngày</button>
@@ -497,6 +499,7 @@
         <select id="report-location"></select>
       </label>
       <div class="chip-row" id="report-presets">
+        <button type="button" class="chip" data-preset="today">Hôm nay</button>
         <button type="button" class="chip" data-preset="week">Tuần này</button>
         <button type="button" class="chip" data-preset="month">Tháng này</button>
         <button type="button" class="chip" data-preset="7">7 ngày</button>
@@ -504,6 +507,10 @@
     </div>
 
     <div class="stat-grid" data-bind="report-summary"></div>
+    <h3 class="section-heading">Số lượng xôi theo ngày</h3>
+    <p class="hint-text">Tổng = bán lẻ + bỏ mối + bán sỉ + chưa phân loại, theo số lượng bán đã nhập trên phiếu. Không cộng phiếu chuyển hàng hoặc số lượng tại bếp. Mỗi lượng xôi chỉ nhập một lần; ngày chưa có phiếu hiển thị 0.</p>
+    <div class="table-wrap" data-bind="report-daily-sales"></div>
+    <button type="button" id="btn-export-daily-csv" class="btn btn-ghost report-no-print">Xuất số lượng theo ngày CSV</button>
 
     <div data-bind="report-by-location-wrap">
       <h3 class="section-heading">Theo điểm bán</h3>
@@ -549,6 +556,16 @@
           <option value="point" selected>Điểm bán</option>
         </select>
       </label>
+      <label class="field">
+        <span>Kênh bán (đối với điểm bán)</span>
+        <select id="loc-channel" required>
+          <option value="">Chưa phân loại — chọn kênh</option>
+          <option value="retail" selected>Bán lẻ</option>
+          <option value="reseller">Bỏ mối — không tính lương/thưởng</option>
+          <option value="wholesale">Bán sỉ — không tính lương/thưởng</option>
+        </select>
+      </label>
+      <p class="hint-text">Phiếu cũ chưa lưu kênh sẽ tính theo lựa chọn này, kể cả lương/thưởng. Phiếu mới giữ kênh tại thời điểm tạo. Chọn đúng kênh cho các điểm sỉ và bỏ mối trước khi xem báo cáo hoặc quyết toán.</p>
       <label class="field">
         <span>Địa chỉ</span>
         <input type="text" id="loc-address" />

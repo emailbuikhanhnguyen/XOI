@@ -4,9 +4,9 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { db } from "../firebase-init.js";
 import { $, $$, viewRoot, mount, emptyState, toast, reportError } from "../ui.js";
-import { state, isAdmin, locationGiaBan, staffName, locationName } from "../state.js";
+import { state, isAdmin, locationGiaBan, staffName, locationName, channelOf, paysWages, withPayroll } from "../state.js";
 import { fetchEntriesByUid, logChange, saveOp } from "../data.js";
-import { addDays, escapeHtml, fmt, fmtNum, formatDateVN, matchesSearch, mondayOf, todayISO } from "../calc.js";
+import { addDays, escapeHtml, fmt, fmtNum, formatDateVN, matchesSearch, mondayOf, todayISO, SALES_CHANNELS } from "../calc.js";
 import { DATE_ENTRY_PAST_DAYS } from "../constants.js";
 
 let entryCacheForUser = [];
@@ -17,7 +17,23 @@ let editingEntryId = null;
 let entryListLimit = 30; // "Xem thêm" — tăng dần khi bấm
 
 function currentEntryLocationId() {
-  return state.staffDirectory[entryTargetUid]?.locationId ?? state.profile.locationId;
+  return entryCacheForUser.find((r) => r.id === editingEntryId)?.locationId ?? state.staffDirectory[entryTargetUid]?.locationId ?? state.profile.locationId;
+}
+
+function formEntryContext() {
+  return entryCacheForUser.find((r) => r.id === editingEntryId) || { locationId: currentEntryLocationId() };
+}
+
+function syncPayrollForm() {
+  const context = formEntryContext();
+  const noPay = !paysWages(context);
+  const off = $("#entry-off").checked;
+  for (const id of ["entry-luong", "entry-thuong", "entry-tong"]) {
+    $("#" + id).disabled = off || noPay;
+    if (noPay) $("#" + id).value = 0;
+  }
+  $('[data-bind="entry-channel-note"]').textContent = `${SALES_CHANNELS[channelOf(context)]}${noPay ? " — chỉ ghi số lượng bán, không tính lương/thưởng." : ""}`;
+  recalcTong();
 }
 
 // Tổng (đ) = Lương cơ bản + Thưởng, tự tính lại mỗi khi 1 trong 2 ô đổi giá
@@ -91,6 +107,7 @@ export async function renderChamCong() {
   const workFields = $("#entry-work-fields");
   offEl.addEventListener("change", () => {
     $$("input", workFields).forEach((i) => (i.disabled = offEl.checked));
+    syncPayrollForm();
   });
 
   const luongEl = $("#entry-luong"), thuongEl = $("#entry-thuong");
@@ -101,7 +118,7 @@ export async function renderChamCong() {
   // KHÔNG bắn sự kiện "input" — nếu không gọi tay ở đây, ô Tổng sẽ đứng yên ở
   // 0 cho tới khi người dùng tự gõ lại vào ô Lương/Thưởng thì "Tổng" mới
   // "nhảy" theo. Đây chính là lỗi "phiếu lương không nhảy" khi mở phiếu mới.
-  recalcTong();
+  syncPayrollForm();
 
   $("#btn-entry-cancel").addEventListener("click", () => resetEntryForm());
 
@@ -111,6 +128,7 @@ export async function renderChamCong() {
       toast(`Chỉ được chọn ngày từ ${formatDateVN(dateEl.min)} đến ${formatDateVN(dateEl.max)}.`);
       return;
     }
+    syncPayrollForm();
     const off = offEl.checked;
     const targetLocationId = currentEntryLocationId();
     if (!targetLocationId) {
@@ -134,6 +152,8 @@ export async function renderChamCong() {
       ghiChu: $("#entry-ghichu").value.trim(),
       updatedAt: serverTimestamp(),
     };
+    const channel = channelOf(formEntryContext());
+    if (channel !== "unknown") payload.salesChannel = channel;
     const wasEditing = !!editingEntryId;
     // Mỗi nhân viên chỉ nên có 1 phiếu/ngày — chặn tạo phiếu MỚI (không áp
     // dụng khi đang Sửa) trùng ngày với 1 phiếu đã có, để tránh bấm nhầm/bấm
@@ -205,6 +225,7 @@ function resetEntryForm() {
   recalcTong(); // lương vừa được điền lại mặc định bằng JS — tính lại Tổng ngay, không chờ người dùng gõ
   $("#btn-entry-cancel").hidden = true;
   $$("input", $("#entry-work-fields")).forEach((i) => (i.disabled = false));
+  syncPayrollForm();
 }
 
 async function loadAndRenderEntryList() {
@@ -233,7 +254,7 @@ function renderEntryListFiltered() {
 // phiếu chấm công gần đây) — vì vậy được export thay vì để riêng module này.
 export function renderEntryCards(rows, showName, showActions = false, showLocation = false) {
   if (!rows.length) return "";
-  return rows.map((r) => `
+  return rows.map(withPayroll).map((r) => `
     <div class="entry-card" data-id="${r.id}">
       <div class="entry-card-top">
         <span class="entry-date">${formatDateVN(r.date)}${showName ? " · " + (r.name || staffName(r.uid)) : ""}${showLocation ? " · " + escapeHtml(locationName(r.locationId)) : ""}</span>
@@ -284,6 +305,7 @@ viewRoot.addEventListener("click", async (e) => {
     $("#entry-ship").value = row.ship || 0;
     $("#entry-dep").value = row.dep || 0;
     $("#entry-ghichu").value = row.ghiChu || "";
+    syncPayrollForm();
     $("#btn-entry-cancel").hidden = false;
     window.scrollTo({ top: 0, behavior: "smooth" });
   }

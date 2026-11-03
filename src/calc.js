@@ -12,6 +12,48 @@ export function fmt(n) {
   return Math.round(n || 0).toLocaleString("vi-VN") + "đ";
 }
 
+export const SALES_CHANNELS = { retail: "Bán lẻ", reseller: "Bỏ mối", wholesale: "Bán sỉ", kitchen: "Bếp", unknown: "Chưa phân loại" };
+
+// Phiếu mới giữ kênh tại thời điểm tạo; phiếu cũ dùng cấu hình điểm.
+// Không suy đoán kênh từ tên điểm hay giá bán.
+export function entryChannel(entry, locations = {}) {
+  const loc = locations[entry.locationId];
+  const channel = entry.salesChannel ?? (loc?.type === "kitchen" ? "kitchen" : loc?.salesChannel);
+  return Object.hasOwn(SALES_CHANNELS, channel) ? channel : "unknown";
+}
+
+export function hasPayroll(entry, locations = {}) {
+  return !["reseller", "wholesale"].includes(entryChannel(entry, locations));
+}
+
+export function payrollEntry(entry, locations = {}) {
+  return entry.offDay || !hasPayroll(entry, locations)
+    ? { ...entry, luong: 0, thuong: 0, tong: 0 }
+    : { ...entry };
+}
+
+export function salesQuantity(entry, locations = {}) {
+  return entry.offDay || entryChannel(entry, locations) === "kitchen" ? 0 : (Number(entry.soLuong) || 0);
+}
+
+export function dailySales(entries, locations, from, to, locationId = "") {
+  const byDay = new Map();
+  if (!from || !to || from > to) return [];
+  for (let day = from; day <= to; day = addDays(day, 1)) {
+    byDay.set(day, { date: day, retail: 0, reseller: 0, wholesale: 0, unknown: 0, total: 0 });
+  }
+  for (const entry of entries) {
+    if (locationId && entry.locationId !== locationId) continue;
+    const day = byDay.get(entry.date);
+    const channel = entryChannel(entry, locations);
+    if (!day || channel === "kitchen" || entry.offDay) continue;
+    const qty = salesQuantity(entry, locations);
+    day[channel] += qty;
+    day.total += qty;
+  }
+  return [...byDay.values()];
+}
+
 export function fmtNum(n) {
   return (n || 0).toLocaleString("vi-VN");
 }
