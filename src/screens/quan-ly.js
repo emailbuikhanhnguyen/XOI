@@ -11,25 +11,38 @@ import { auth, db } from "../firebase-init.js";
 import { $, $$, viewRoot, mount, emptyState, toast, reportError } from "../ui.js";
 import { state, activeLocations, locationName } from "../state.js";
 import { loadLocationsDirectory, loadStaffDirectory, logChange } from "../data.js";
-import { escapeHtml, fmt } from "../calc.js";
+import { escapeHtml, fmt, SALES_CHANNELS } from "../calc.js";
 
 let editingLocationId = null;
 let editingStaffUid = null;
 
 export async function renderQuanLy() {
   mount("quan-ly");
+  editingLocationId = null;
   editingStaffUid = null;
+  const syncChannelForm = () => {
+    const kitchen = $("#loc-type").value === "kitchen";
+    $("#loc-channel").disabled = kitchen;
+    $("#loc-channel").required = !kitchen;
+    const noPay = !kitchen && ["reseller", "wholesale"].includes($("#loc-channel").value);
+    $("#loc-luong").disabled = noPay;
+    if (noPay) $("#loc-luong").value = 0;
+  };
+  $("#loc-type").addEventListener("change", syncChannelForm);
+  $("#loc-channel").addEventListener("change", syncChannelForm);
 
   $("#form-location").addEventListener("submit", async (e) => {
     e.preventDefault();
     const payload = {
       name: $("#loc-name").value.trim(),
       type: $("#loc-type").value,
+      salesChannel: $("#loc-type").value === "kitchen" ? "kitchen" : $("#loc-channel").value,
       address: $("#loc-address").value.trim(),
       giaBan: parseFloat($("#loc-giaban").value) || 0,
       luongMacDinh: parseFloat($("#loc-luong").value) || 0,
       updatedAt: serverTimestamp(),
     };
+    if (["reseller", "wholesale"].includes(payload.salesChannel)) payload.luongMacDinh = 0;
     if (!payload.name) { toast("Nhập tên điểm"); return; }
     try {
       if (editingLocationId) {
@@ -236,6 +249,7 @@ function resetLocationForm() {
   const f = $("#form-location");
   if (!f) return;
   f.reset();
+  $("#loc-channel").dispatchEvent(new Event("change"));
   $("#btn-loc-cancel").hidden = true;
 }
 
@@ -260,6 +274,7 @@ function renderLocationList() {
         <span class="${l.type === "kitchen" ? "badge-paid" : "badge-unpaid"}" style="background:${l.type === "kitchen" ? "var(--gold-tint)" : "var(--green-tint)"};color:${l.type === "kitchen" ? "var(--gold)" : "var(--green-dark)"}">${l.type === "kitchen" ? "Bếp trung tâm" : "Điểm bán"}</span>
       </div>
       <div class="entry-meta">
+        <span>Kênh: <b>${SALES_CHANNELS[l.type === "kitchen" ? "kitchen" : l.salesChannel] || "Chưa phân loại"}</b></span>
         <span>Giá bán: <b>${fmt(l.giaBan)}</b></span>
         <span>Lương mặc định: <b>${fmt(l.luongMacDinh)}</b></span>
         ${l.address ? `<span>${escapeHtml(l.address)}</span>` : ""}
@@ -389,9 +404,11 @@ viewRoot.addEventListener("click", async (e) => {
     editingLocationId = id;
     $("#loc-name").value = l.name || "";
     $("#loc-type").value = l.type || "point";
+    $("#loc-channel").value = l.type === "kitchen" ? "" : (l.salesChannel || "");
     $("#loc-address").value = l.address || "";
     $("#loc-giaban").value = l.giaBan ?? "";
     $("#loc-luong").value = l.luongMacDinh ?? "";
+    $("#loc-channel").dispatchEvent(new Event("change"));
     $("#btn-loc-cancel").hidden = false;
     window.scrollTo({ top: 0, behavior: "smooth" });
   }

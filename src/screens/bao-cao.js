@@ -2,9 +2,9 @@
 import { doc, getDoc, serverTimestamp, setDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { db } from "../firebase-init.js";
 import { $, $$, mount, emptyState, toast, reportError } from "../ui.js";
-import { state, activeLocations, entryGiaBan, locationName, staffName } from "../state.js";
+import { state, activeLocations, entryGiaBan, locationName, staffName, withPayroll, paysWages, soldQty } from "../state.js";
 import { computeGiaVonPerPhan, fetchEntriesByRange, fetchIngredientsByRange, fetchThuChiByRange } from "../data.js";
-import { addDays, escapeHtml, fmt, fmtNum, isoLocal, mondayOf, todayISO, weekdayLabel } from "../calc.js";
+import { addDays, escapeHtml, fmt, fmtNum, isoLocal, mondayOf, todayISO, weekdayLabel, dailySales } from "../calc.js";
 
 let reportEntriesCache = [];
 let reportIngCache = [];
@@ -42,7 +42,8 @@ export async function renderBaoCao() {
     chip.addEventListener("click", () => {
       const p = chip.dataset.preset;
       const today = todayISO();
-      if (p === "week") { fromEl.value = mondayOf(today); toEl.value = addDays(mondayOf(today), 5); }
+      if (p === "today") { fromEl.value = today; toEl.value = today; }
+      else if (p === "week") { fromEl.value = mondayOf(today); toEl.value = addDays(mondayOf(today), 5); }
       else if (p === "month") { fromEl.value = today.slice(0, 8) + "01"; toEl.value = today; }
       else if (p === "7") { fromEl.value = addDays(today, -6); toEl.value = today; }
       loadReport();
@@ -50,6 +51,7 @@ export async function renderBaoCao() {
   });
   fromEl.addEventListener("change", loadReport);
   toEl.addEventListener("change", loadReport);
+  $("#btn-export-daily-csv").addEventListener("click", exportDailyCsv);
   $("#btn-export-csv").addEventListener("click", exportCsv);
   $("#btn-export-pdf").addEventListener("click", () => window.print());
 
@@ -75,11 +77,12 @@ async function loadReport() {
     return;
   }
 
-  const allWorked = reportEntriesCache.filter((r) => !r.offDay);
+  const allWorked = reportEntriesCache.map(withPayroll).filter((r) => !r.offDay);
+  renderDailySales(from, to, locFilter);
   const worked = locFilter ? allWorked.filter((r) => r.locationId === locFilter) : allWorked;
 
-  const tongSoLuong = worked.reduce((s, r) => s + (r.soLuong || 0), 0);
-  const doanhThu = worked.reduce((s, r) => s + (r.soLuong || 0) * entryGiaBan(r), 0);
+  const tongSoLuong = worked.reduce((s, r) => s + soldQty(r), 0);
+  const doanhThu = worked.reduce((s, r) => s + soldQty(r) * entryGiaBan(r), 0);
   const luongThuong = worked.reduce((s, r) => s + (r.tong || 0), 0);
 
   const selectedIsPoint = locFilter && state.locationsDirectory[locFilter]?.type === "point";
@@ -135,15 +138,15 @@ async function renderMonthlyChart(locFilter, giaVonPerPhan = 0) {
     fromDate.setDate(1);
     const fromStr = isoLocal(fromDate);
     const rows = await fetchEntriesByRange(fromStr, toStr);
-    const worked = rows.filter((r) => !r.offDay && (!locFilter || r.locationId === locFilter));
+    const worked = rows.map(withPayroll).filter((r) => !r.offDay && (!locFilter || r.locationId === locFilter));
 
     const byMonth = {};
     worked.forEach((r) => {
       const m = r.date.slice(0, 7);
       byMonth[m] = byMonth[m] || { doanhThu: 0, luongThuong: 0, soLuong: 0 };
-      byMonth[m].doanhThu += (r.soLuong || 0) * entryGiaBan(r);
+      byMonth[m].doanhThu += soldQty(r) * entryGiaBan(r);
       byMonth[m].luongThuong += r.tong || 0;
-      byMonth[m].soLuong += r.soLuong || 0;
+      byMonth[m].soLuong += soldQty(r);
     });
 
     const months = [];
@@ -187,8 +190,8 @@ function renderByLocationTable(allWorked, allIng, locFilter, giaVonPerPhan = 0) 
   allWorked.forEach((r) => {
     const id = r.locationId || "__none";
     groups[id] = groups[id] || { name: locationName(r.locationId), soLuong: 0, doanhThu: 0, luongThuong: 0 };
-    groups[id].soLuong += r.soLuong || 0;
-    groups[id].doanhThu += (r.soLuong || 0) * entryGiaBan(r);
+    groups[id].soLuong += soldQty(r);
+    groups[id].doanhThu += soldQty(r) * entryGiaBan(r);
     groups[id].luongThuong += r.tong || 0;
   });
   const rows = Object.values(groups).sort((a, b) => b.doanhThu - a.doanhThu);
@@ -212,12 +215,12 @@ function renderByLocationTable(allWorked, allIng, locFilter, giaVonPerPhan = 0) 
 
 function renderByStaffTable(worked, showLocationCol) {
   const groups = {};
-  worked.forEach((r) => {
+  worked.filter(paysWages).forEach((r) => {
     groups[r.uid + "_" + (r.locationId || "")] = groups[r.uid + "_" + (r.locationId || "")] || {
       name: r.name || staffName(r.uid), locationId: r.locationId, soNgay: 0, soLuong: 0, luong: 0, thuong: 0, tong: 0,
     };
     const g = groups[r.uid + "_" + (r.locationId || "")];
-    g.soNgay++; g.soLuong += r.soLuong || 0; g.luong += r.luong || 0; g.thuong += r.thuong || 0; g.tong += r.tong || 0;
+    g.soNgay++; g.soLuong += soldQty(r); g.luong += r.luong || 0; g.thuong += r.thuong || 0; g.tong += r.tong || 0;
   });
   const rows = Object.values(groups).sort((a, b) => b.tong - a.tong);
   const el = $('[data-bind="report-by-staff"]');
@@ -234,7 +237,7 @@ function renderByStaffTable(worked, showLocationCol) {
 
 function renderDailyBarChart(worked, from, to) {
   const byDay = {};
-  worked.forEach((r) => { byDay[r.date] = (byDay[r.date] || 0) + (r.soLuong || 0) * entryGiaBan(r); });
+  worked.forEach((r) => { byDay[r.date] = (byDay[r.date] || 0) + soldQty(r) * entryGiaBan(r); });
   const days = [];
   let d = from;
   let guard = 0;
@@ -261,7 +264,7 @@ function renderDailyBarChart(worked, from, to) {
 // Firestore mỗi lần bấm.
 async function renderSettlements(entries) {
   const groups = {};
-  entries.forEach((r) => {
+  entries.filter(paysWages).forEach((r) => {
     const wk = mondayOf(r.date);
     const key = r.uid + "_" + wk;
     groups[key] = groups[key] || { uid: r.uid, name: r.name || staffName(r.uid), week: wk, total: 0 };
@@ -393,7 +396,7 @@ function exportCsv() {
   const from = $("#report-from").value, to = $("#report-to").value;
   const locFilter = $("#report-location").value;
   const rows = [["Ngày", "Điểm bán", "Nhân viên", "Lương", "Số lượng", "Thưởng", "Tổng", "Ship", "Xôi ship/dẹp", "Ghi chú"]];
-  reportEntriesCache.filter((r) => !locFilter || r.locationId === locFilter).forEach((r) => {
+  reportEntriesCache.map(withPayroll).filter((r) => !locFilter || r.locationId === locFilter).forEach((r) => {
     rows.push([r.date, locationName(r.locationId), r.name || staffName(r.uid), r.offDay ? "Nghỉ" : r.luong, r.offDay ? "" : r.soLuong,
       r.offDay ? "" : r.thuong, r.offDay ? 0 : r.tong, r.ship || "", r.dep || "", (r.ghiChu || "").replace(/\n/g, " ")]);
   });
@@ -404,4 +407,32 @@ function exportCsv() {
   a.download = `so-xoi_${from}_den_${to}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+function dailyRows(from, to, locFilter) {
+  return dailySales(reportEntriesCache, state.locationsDirectory, from, to, locFilter);
+}
+
+function renderDailySales(from, to, locFilter) {
+  const rows = dailyRows(from, to, locFilter);
+  const keys = ["retail", "reseller", "wholesale", "unknown", "total"];
+  const total = Object.fromEntries(keys.map((key) => [key, rows.reduce((sum, row) => sum + row[key], 0)]));
+  $('[data-bind="report-daily-sales"]').innerHTML = rows.length ? `
+    <table class="data-table"><thead><tr><th>Ngày</th><th>Bán lẻ</th><th>Bỏ mối</th><th>Bán sỉ</th><th>Chưa phân loại</th><th>Tổng xôi</th></tr></thead>
+    <tbody>${rows.map((r) => `<tr><td>${r.date.slice(8)}/${r.date.slice(5, 7)}/${r.date.slice(0, 4)}</td>${keys.map((key) => `<td>${fmtNum(r[key])}</td>`).join("")}</tr>`).join("")}</tbody>
+    <tfoot><tr><th>Tổng</th>${keys.map((key) => `<th>${fmtNum(total[key])}</th>`).join("")}</tr></tfoot></table>
+    <p class="hint-text">Điểm cũ chưa chọn kênh nằm ở “Chưa phân loại” và vẫn giữ cách tính lương cũ. Vào Quản lý → sửa điểm để chọn Bán lẻ, Bỏ mối hoặc Bán sỉ.</p>` : emptyState("Chọn khoảng ngày hợp lệ");
+}
+
+function exportDailyCsv() {
+  const from = $("#report-from").value, to = $("#report-to").value;
+  const rows = [["Ngày", "Bán lẻ", "Bỏ mối", "Bán sỉ", "Chưa phân loại", "Tổng xôi"],
+    ...dailyRows(from, to, $("#report-location").value).map((r) => [r.date, r.retail, r.reseller, r.wholesale, r.unknown, r.total])];
+  const csv = "\uFEFF" + rows.map((row) => row.join(",")).join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `so-luong-xoi_${from}_${to}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }

@@ -1,6 +1,6 @@
 /* ===================== TRANG CHỦ ===================== */
 import { $, $$, mount, emptyState } from "../ui.js";
-import { state, isAdmin, isKitchenContext, activeLocations, entryGiaBan, locationName } from "../state.js";
+import { state, isAdmin, isKitchenContext, activeLocations, entryGiaBan, locationName, withPayroll, soldQty } from "../state.js";
 import { fetchEntriesByRange, fetchEntriesByUid, fetchIngredientsByRange, fetchTransfersByRange } from "../data.js";
 import { addDays, escapeHtml, fmt, formatDateVN, mondayOf, todayISO } from "../calc.js";
 import { STOCK_WINDOW_DAYS } from "../constants.js";
@@ -50,7 +50,7 @@ export async function renderTrangChu() {
       const today = todayISO();
       const rows = await fetchEntriesByRange(today, today);
       const worked = rows.filter((r) => !r.offDay);
-      const totalDoanhThu = worked.reduce((s, r) => s + (r.soLuong || 0) * entryGiaBan(r), 0);
+      const totalDoanhThu = worked.reduce((s, r) => s + soldQty(r) * entryGiaBan(r), 0);
       const soNVLam = new Set(worked.map((r) => r.uid)).size;
       statsEl.innerHTML = `
         <div class="hero-stat"><span class="num">${fmt(totalDoanhThu)}</span><span class="label">Doanh thu ước tính hôm nay (tất cả điểm)</span></div>
@@ -62,14 +62,14 @@ export async function renderTrangChu() {
         const locs = activeLocations().filter(([, l]) => l.type === "point");
         byLocEl.innerHTML = locs.length ? locs.map(([id, l]) => {
           const locRows = worked.filter((r) => r.locationId === id);
-          const dt = locRows.reduce((s, r) => s + (r.soLuong || 0) * entryGiaBan(r), 0);
+          const dt = locRows.reduce((s, r) => s + soldQty(r) * entryGiaBan(r), 0);
           return `<div class="stat-card"><div class="label">${escapeHtml(l.name)}</div><div class="value">${fmt(dt)}</div></div>`;
         }).join("") : emptyState("Chưa có điểm bán nào — vào mục Quản lý để thêm");
       }
       await renderAttendanceStatus(todayISO());
       await renderHomeReminders();
     } else {
-      const rows = await fetchEntriesByUid(state.currentUser.uid);
+      const rows = (await fetchEntriesByUid(state.currentUser.uid)).map(withPayroll);
       const todayRow = rows.find((r) => r.date === todayISO());
       const weekStart = mondayOf(todayISO());
       const weekRows = rows.filter((r) => r.date >= weekStart && r.date <= todayISO());
@@ -104,7 +104,7 @@ async function renderLocationLeaderboard() {
     const worked = rows.filter((r) => !r.offDay);
     const totals = pLocs.map(([id, l]) => {
       const locRows = worked.filter((r) => r.locationId === id);
-      const doanhThu = locRows.reduce((s, r) => s + (r.soLuong || 0) * entryGiaBan(r), 0);
+      const doanhThu = locRows.reduce((s, r) => s + soldQty(r) * entryGiaBan(r), 0);
       return { name: l.name, doanhThu };
     }).sort((a, b) => b.doanhThu - a.doanhThu);
     el.innerHTML = `
@@ -216,7 +216,7 @@ async function renderAttendanceStatus(dateStr) {
         statusHtml = `<span class="badge-paid">Đã chấm công</span>`;
         metaHtml = `<div class="entry-meta">
           <span>Số lượng: <b>${fmt(entry.soLuong)}</b></span>
-          <span>Tổng: <b>${fmt(entry.tong)}</b></span>
+          <span>Tổng: <b>${fmt(withPayroll(entry).tong)}</b></span>
         </div>`;
       }
       return `

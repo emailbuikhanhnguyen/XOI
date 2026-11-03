@@ -330,3 +330,26 @@ chính"** để dùng như một app thật.
   cần độ chính xác lợi nhuận theo điểm cao hơn.
 - Thêm bước kiểm kho định kỳ có ghi log điều chỉnh riêng (thay vì chỉ dựa vào
   nhập − xuất).
+
+### Báo cáo theo kênh bán
+
+Trong **Quản lý → Sửa điểm**, chọn **Bán lẻ**, **Bỏ mối** hoặc **Bán sỉ**.
+Bỏ mối và bán sỉ không tính lương/thưởng; bếp vẫn tính công bình thường.
+Phiếu mới lưu `salesChannel` tại lúc tạo. Phiếu cũ chưa có trường này đọc
+kênh từ điểm hiện tại; không có bước sửa hàng loạt dữ liệu Firestore.
+Vì vậy phải phân loại các điểm cũ trước khi dùng báo cáo để trả lương.
+Các điểm chưa phân loại giữ nguyên cách tính lương cũ và có cột riêng trong báo cáo.
+Không tự suy đoán từ tên điểm hay giá bán. Nếu một điểm đã đổi kênh qua nhiều
+thời kỳ, cần rà lại các phiếu cũ trước khi áp dụng cấu hình chung cho điểm đó.
+
+**Báo cáo → Số lượng xôi theo ngày** cộng số lượng bán ghi trên phiếu của
+ba kênh (và các điểm chưa phân loại), theo bộ lọc ngày/điểm. Có nút **Hôm nay**
+và xuất CSV riêng. Ngày không có phiếu hiện 0, không khẳng định đã bán hết hay
+không bán. Không cộng số lượng của bếp hoặc phiếu chuyển hàng để tránh trùng
+với lượng bán. Nếu nhiều người cùng bán một điểm, mỗi người chỉ ghi phần mình
+bán; không lặp tổng của cả điểm trên từng phiếu nhân viên.
+
+Kiểm tra trước khi đưa vào sử dụng: chọn kênh cho các điểm sỉ/bỏ mối, đối chiếu
+một ngày với sổ thực tế, kiểm tra tổng lương bán lẻ và công bếp. Thay đổi này
+không sửa các vấn đề phân quyền Firestore hoặc chốt tuần thiếu ngày đã được
+phát hiện riêng trong đợt rà soát.
