@@ -7,7 +7,7 @@ import {
 import { db } from "./firebase-init.js";
 import { state } from "./state.js";
 import { reportError } from "./ui.js";
-import { todayISO, addDays, avgUnitCostMap } from "./calc.js";
+import { todayISO, addDays, avgUnitCostMap, manualProductCost } from "./calc.js";
 import { STOCK_WINDOW_DAYS } from "./constants.js";
 
 // Lưu 1 thao tác ghi Firestore kiểu "optimistic": khi đang mất mạng, promise
@@ -99,6 +99,13 @@ export async function loadItemCatalog() {
 // thể), và trả về 0 đã có ý nghĩa sẵn là "chưa đặt định mức" — báo lỗi thêm
 // ở đây dễ gây hiểu nhầm/trùng lặp hơn là giúp ích.
 export async function computeGiaVonPerPhan() {
+  // Đọc mới để báo cáo nhận giá vừa lưu từ thiết bị khác. Lỗi đọc phải báo
+  // ra ngoài, tránh hiển thị lợi nhuận với giá vốn bằng 0 do mất kết nối.
+  const settingsSnap = await getDoc(doc(db, "settings", "general"));
+  const settings = settingsSnap.exists() ? settingsSnap.data() : {};
+  state.settings.giaVonMoiVien = settings.giaVonMoiVien ?? null;
+  const manualCost = manualProductCost(settings);
+  if (manualCost !== null) return manualCost;
   try {
     const from = addDays(todayISO(), -STOCK_WINDOW_DAYS);
     const rows = await fetchIngredientsByRange(from, todayISO());

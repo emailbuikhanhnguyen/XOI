@@ -177,3 +177,9 @@ export function avgUnitCostMap(ingRows) {
   });
   return map;
 }
+
+// null nghĩa là chưa nhập giá vốn thủ công. Số 0 là một mức giá hợp lệ.
+export function manualProductCost(settings) {
+  const cost = settings?.giaVonMoiVien;
+  return typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : null;
+}
