@@ -542,6 +542,16 @@
 
 <template id="tpl-quan-ly">
   <section class="view">
+    <h3 class="section-heading">Giá vốn sản phẩm</h3>
+    <form id="form-product-cost" class="ticket ticket-form">
+      <label class="field">
+        <span>Giá vốn mỗi viên xôi (đ)</span>
+        <input type="number" inputmode="numeric" id="product-cost" min="0" step="1" placeholder="VD: 4000" />
+      </label>
+      <p class="hint-text">Giá vốn dùng chung cho các điểm bán, gồm chi phí làm ra một viên xôi. Lương/thưởng và chi khác được trừ riêng trong báo cáo. Giá mới áp dụng cho toàn bộ khoảng ngày đang xem, kể cả ngày cũ. Để trống và lưu để dùng lại định mức nguyên liệu.</p>
+      <div class="ticket-actions"><button type="submit" class="btn btn-primary">Lưu giá vốn</button></div>
+      <p class="hint-text" data-bind="product-cost-status"></p>
+    </form>
     <h3 class="section-heading">Điểm bán &amp; bếp trung tâm</h3>
     <form id="form-location" class="ticket ticket-form">
       <p class="eyebrow">Thêm / sửa điểm</p>

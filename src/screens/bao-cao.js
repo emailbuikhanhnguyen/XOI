@@ -4,7 +4,7 @@ import { db } from "../firebase-init.js";
 import { $, $$, mount, emptyState, toast, reportError } from "../ui.js";
 import { state, activeLocations, entryGiaBan, locationName, staffName, withPayroll, paysWages, soldQty } from "../state.js";
 import { computeGiaVonPerPhan, fetchEntriesByRange, fetchIngredientsByRange, fetchThuChiByRange } from "../data.js";
-import { addDays, escapeHtml, fmt, fmtNum, isoLocal, mondayOf, todayISO, weekdayLabel, dailySales } from "../calc.js";
+import { addDays, escapeHtml, fmt, fmtNum, isoLocal, mondayOf, todayISO, weekdayLabel, dailySales, manualProductCost } from "../calc.js";
 
 let reportEntriesCache = [];
 let reportIngCache = [];
@@ -90,7 +90,7 @@ async function loadReport() {
   const chiPhiNL = selectedIsPoint ? 0 : ingScoped.reduce((s, r) => s + (r.tien || 0), 0);
   // Đã đặt định mức nguyên liệu/phần ở Quản lý → phân bổ giá vốn NL theo số
   // lượng bán thực tế, áp dụng được cho cả từng điểm bán (không chỉ "Tất cả điểm").
-  const coBOM = giaVonPerPhan > 0;
+  const coBOM = (manualProductCost(state.settings) !== null || giaVonPerPhan > 0);
   const giaVonNLPhanBo = giaVonPerPhan * tongSoLuong;
 
   const tcScoped = locFilter ? reportThuChiCache.filter((r) => r.locationId === locFilter) : reportThuChiCache;
@@ -104,7 +104,7 @@ async function loadReport() {
     <div class="stat-card gold"><div class="label">Doanh thu ước tính</div><div class="value">${fmt(doanhThu)}</div></div>
     <div class="stat-card"><div class="label">Số lượng bán</div><div class="value">${fmtNum(tongSoLuong)}</div></div>
     ${coBOM
-      ? `<div class="stat-card accent"><div class="label">Giá vốn NL (theo định mức)</div><div class="value">${fmt(giaVonNLPhanBo)}</div></div>`
+      ? `<div class="stat-card accent"><div class="label">Giá vốn sản phẩm</div><div class="value">${fmt(giaVonNLPhanBo)}</div></div>`
       : `<div class="stat-card accent"><div class="label">Chi phí nguyên liệu${selectedIsPoint ? " (—)" : ""}</div><div class="value">${fmt(chiPhiNL)}</div></div>`}
     <div class="stat-card accent"><div class="label">Lương + thưởng</div><div class="value">${fmt(luongThuong)}</div></div>
     <div class="stat-card gold"><div class="label">Thu khác</div><div class="value">${fmt(thuKhac)}</div></div>
@@ -112,7 +112,7 @@ async function loadReport() {
     <div class="stat-card"><div class="label">Lợi nhuận ước tính</div><div class="value">${fmt(loiNhuan)}</div></div>
   `;
   if (coBOM) {
-    sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Giá vốn NL ước tính = ${fmt(giaVonPerPhan)}/phần × số lượng bán, theo định mức nguyên liệu đã đặt — áp dụng được cho cả từng điểm bán.</p>`);
+    sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Giá vốn sản phẩm = ${fmt(giaVonPerPhan)}/phần × số lượng bán, ${manualProductCost(state.settings) !== null ? "theo giá nhập tay hiện tại (áp dụng cả ngày cũ)" : "theo định mức nguyên liệu"}. Lợi nhuận = doanh thu − giá vốn − lương/thưởng + thu khác − chi khác.</p>`);
   } else if (selectedIsPoint) {
     sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Chi phí nguyên liệu phát sinh chung ở bếp trung tâm nên không chia theo từng điểm bán — xem ở lựa chọn "Tất cả điểm" hoặc điểm bếp.</p>`);
   }
@@ -164,7 +164,7 @@ async function renderMonthlyChart(locFilter, giaVonPerPhan = 0) {
     const max = Math.max(1, ...dataRows.map((d) => d.doanhThu));
 
     el.innerHTML = `
-      <p class="eyebrow">Doanh thu ${MONTHS_BACK} tháng gần nhất${giaVonPerPhan > 0 ? " (lợi nhuận đã trừ giá vốn NL theo định mức)" : ""}</p>
+      <p class="eyebrow">Doanh thu ${MONTHS_BACK} tháng gần nhất${(manualProductCost(state.settings) !== null || giaVonPerPhan > 0) ? " (lợi nhuận đã trừ giá vốn sản phẩm)" : ""}</p>
       ${dataRows.map((d) => `
         <div class="bar-row">
           <span class="bar-label">Th${d.month.slice(5, 7)}/${d.month.slice(2, 4)}</span>
@@ -197,10 +197,10 @@ function renderByLocationTable(allWorked, allIng, locFilter, giaVonPerPhan = 0) 
   const rows = Object.values(groups).sort((a, b) => b.doanhThu - a.doanhThu);
   if (!rows.length) { el.innerHTML = emptyState("Chưa có dữ liệu"); return; }
   const chiPhiNLTong = allIng.reduce((s, r) => s + (r.tien || 0), 0);
-  const coBOM = giaVonPerPhan > 0;
+  const coBOM = (manualProductCost(state.settings) !== null || giaVonPerPhan > 0);
   el.innerHTML = `
     <table class="data-table">
-      <thead><tr><th>Điểm bán</th><th>Số lượng</th><th>Doanh thu</th><th>Lương+thưởng</th>${coBOM ? "<th>Giá vốn NL</th>" : ""}<th>Lãi ước tính${coBOM ? "" : " (chưa trừ NL)"}</th></tr></thead>
+      <thead><tr><th>Điểm bán</th><th>Số lượng</th><th>Doanh thu</th><th>Lương+thưởng</th>${coBOM ? "<th>Giá vốn sản phẩm</th>" : ""}<th>Lãi ước tính${coBOM ? "" : " (chưa trừ NL)"}</th></tr></thead>
       <tbody>
         ${rows.map((g) => {
           const giaVonNL = coBOM ? giaVonPerPhan * g.soLuong : 0;
@@ -209,7 +209,7 @@ function renderByLocationTable(allWorked, allIng, locFilter, giaVonPerPhan = 0) 
         }).join("")}
       </tbody>
     </table>
-    <p class="hint-text">Chi phí nguyên liệu thực nhập toàn hệ thống (bếp trung tâm): <b>${fmt(chiPhiNLTong)}</b>${coBOM ? " — dùng để đối chiếu với giá vốn ước tính theo định mức ở bảng trên." : " — chưa phân bổ vào từng điểm ở bảng trên (chưa có định mức nguyên liệu/phần nào được đặt)."}</p>
+    <p class="hint-text">Chi phí nguyên liệu thực nhập toàn hệ thống (bếp trung tâm): <b>${fmt(chiPhiNLTong)}</b>${coBOM ? " — dùng để đối chiếu với giá vốn sản phẩm ở bảng trên." : " — chưa phân bổ vào từng điểm ở bảng trên (chưa có định mức nguyên liệu/phần nào được đặt)."}</p>
   `;
 }
 
