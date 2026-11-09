@@ -11,7 +11,7 @@ import { auth, db } from "../firebase-init.js";
 import { $, $$, viewRoot, mount, emptyState, toast, reportError } from "../ui.js";
 import { state, activeLocations, locationName } from "../state.js";
 import { loadLocationsDirectory, loadStaffDirectory, loadSettings, logChange } from "../data.js";
-import { escapeHtml, fmt, SALES_CHANNELS, manualProductCost } from "../calc.js";
+import { escapeHtml, fmt, SALES_CHANNELS, manualProductCosts } from "../calc.js";
 
 let editingLocationId = null;
 let editingStaffUid = null;
@@ -21,29 +21,36 @@ export async function renderQuanLy() {
   editingLocationId = null;
   editingStaffUid = null;
   await loadSettings();
-  const costInput = $("#product-cost");
+  const retailInput = $("#product-cost-retail");
+  const wholesaleInput = $("#product-cost-wholesale");
   const costStatus = $('[data-bind="product-cost-status"]');
   const showCost = () => {
-    const cost = manualProductCost(state.settings);
-    costInput.value = cost ?? "";
-    costStatus.textContent = cost === null ? "Đang dùng định mức nguyên liệu." : `Đang áp dụng ${fmt(cost)}/viên. Vào Báo cáo để xem lợi nhuận.`;
+    const prices = manualProductCosts(state.settings);
+    retailInput.value = prices?.retail ?? "";
+    wholesaleInput.value = prices?.wholesale ?? "";
+    costStatus.textContent = prices
+      ? `Đang áp dụng lẻ + mối ${fmt(prices.retail)}/viên và sỉ ${fmt(prices.wholesale)}/viên.`
+      : "Đang dùng định mức nguyên liệu.";
   };
   showCost();
   $("#form-product-cost").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const value = costInput.value.trim();
-    const cost = value === "" ? null : Number(value);
-    if (cost !== null && (!Number.isFinite(cost) || cost < 0)) {
-      toast("Nhập giá vốn là số từ 0 trở lên.");
+    const retail = retailInput.value === "" ? null : retailInput.valueAsNumber;
+    const wholesale = wholesaleInput.value === "" ? null : wholesaleInput.valueAsNumber;
+    const clearing = retail === null && wholesale === null;
+    const prices = clearing ? null : manualProductCosts({ giaVonTheoKenh: { retail, wholesale } });
+    if (!clearing && !prices) {
+      toast("Nhập cả hai mức giá vốn từ 0 trở lên, hoặc để trống cả hai.");
       return;
     }
     const button = e.submitter;
     if (button) button.disabled = true;
     try {
       await setDoc(doc(db, "settings", "general"), {
-        giaVonMoiVien: cost, updatedAt: serverTimestamp(),
+        giaVonTheoKenh: prices, giaVonMoiVien: null, updatedAt: serverTimestamp(),
       }, { merge: true });
-      state.settings.giaVonMoiVien = cost;
+      state.settings.giaVonTheoKenh = prices;
+      state.settings.giaVonMoiVien = null;
       showCost();
       toast("Đã lưu giá vốn. Báo cáo sẽ tính theo giá vừa nhập.");
     } catch (err) {
