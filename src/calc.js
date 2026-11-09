@@ -204,7 +204,8 @@ export function productCostForSales(entries, locations, prices) {
     if (!qty) continue;
     const channel = entryChannel(entry, locations);
     if (channel === "unknown" && prices.retail !== prices.wholesale) return null;
-    total += qty * (channel === "wholesale" ? prices.wholesale : prices.retail);
+    const usesWholesaleCost = channel === "wholesale" || channel === "reseller";
+    total += qty * (usesWholesaleCost ? prices.wholesale : prices.retail);
   }
   return total;
 }

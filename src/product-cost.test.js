@@ -30,7 +30,7 @@ describe("Giá vốn theo kênh", () => {
     expect(manualProductCosts({ giaVonTheoKenh: { retail: 4000, wholesale: null } })).toBeNull();
   });
 
-  it("cộng đúng giá vốn lẻ, mối và sỉ, ưu tiên kênh đã lưu trên phiếu", () => {
+  it("dùng chung giá sỉ và bỏ mối, ưu tiên kênh đã lưu trên phiếu", () => {
     const entries = [
       { locationId: "le", soLuong: 10 },
       { locationId: "moi", soLuong: 20 },
@@ -38,7 +38,7 @@ describe("Giá vốn theo kênh", () => {
       { locationId: "bep", soLuong: 1000 },
       { locationId: "si", soLuong: 1000, offDay: true },
     ];
-    expect(productCostForSales(entries, locations, prices)).toBe(470000);
+    expect(productCostForSales(entries, locations, prices)).toBe(460000);
   });
 
   it("báo thiếu kênh khi có hai giá khác nhau, kể cả khi một mức giá bằng 0", () => {

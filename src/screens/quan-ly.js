@@ -29,7 +29,7 @@ export async function renderQuanLy() {
     retailInput.value = prices?.retail ?? "";
     wholesaleInput.value = prices?.wholesale ?? "";
     costStatus.textContent = prices
-      ? `Đang áp dụng lẻ + mối ${fmt(prices.retail)}/viên và sỉ ${fmt(prices.wholesale)}/viên.`
+      ? `Đang áp dụng bán lẻ ${fmt(prices.retail)}/viên và bán sỉ + bỏ mối ${fmt(prices.wholesale)}/viên.`
       : "Đang dùng định mức nguyên liệu.";
   };
   showCost();
