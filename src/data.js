@@ -7,7 +7,7 @@ import {
 import { db } from "./firebase-init.js";
 import { state } from "./state.js";
 import { reportError } from "./ui.js";
-import { todayISO, addDays, avgUnitCostMap, manualProductCost } from "./calc.js";
+import { todayISO, addDays, avgUnitCostMap, manualProductCosts } from "./calc.js";
 import { STOCK_WINDOW_DAYS } from "./constants.js";
 
 // Lưu 1 thao tác ghi Firestore kiểu "optimistic": khi đang mất mạng, promise
@@ -92,20 +92,12 @@ export async function loadItemCatalog() {
   }
 }
 
-// Giá vốn nguyên liệu ước tính / 1 phần xôi bán ra = tổng (định mức × giá TB/đơn vị)
-// trên các nguyên liệu đã được đặt định mức ở mục Quản lý.
-// Cố ý im lặng khi lỗi (chỉ console.error, không toast): hàm này chạy như 1
-// phần phụ của việc tải Báo cáo (loadReport() có toast riêng cho lỗi tổng
-// thể), và trả về 0 đã có ý nghĩa sẵn là "chưa đặt định mức" — báo lỗi thêm
-// ở đây dễ gây hiểu nhầm/trùng lặp hơn là giúp ích.
-export async function computeGiaVonPerPhan() {
-  // Đọc mới để báo cáo nhận giá vừa lưu từ thiết bị khác. Lỗi đọc phải báo
-  // ra ngoài, tránh hiển thị lợi nhuận với giá vốn bằng 0 do mất kết nối.
-  const settingsSnap = await getDoc(doc(db, "settings", "general"));
-  const settings = settingsSnap.exists() ? settingsSnap.data() : {};
-  state.settings.giaVonMoiVien = settings.giaVonMoiVien ?? null;
-  const manualCost = manualProductCost(settings);
-  if (manualCost !== null) return manualCost;
+// Đọc lại cấu hình mỗi lần tải báo cáo để nhận giá vừa lưu trên thiết bị khác.
+export async function fetchProductCostPrices() {
+  const snap = await getDoc(doc(db, "settings", "general"));
+  const manual = manualProductCosts(snap.exists() ? snap.data() : {});
+  if (manual) return { prices: manual, manual: true };
+
   try {
     const from = addDays(todayISO(), -STOCK_WINDOW_DAYS);
     const rows = await fetchIngredientsByRange(from, todayISO());
@@ -116,10 +108,10 @@ export async function computeGiaVonPerPhan() {
       const c = costMap[name];
       total += (cat.qtyPerPortion || 0) * (c ? c.avgCost : 0);
     });
-    return total;
+    return { prices: total > 0 ? { retail: total, wholesale: total } : null, manual: false };
   } catch (err) {
     console.error(err);
-    return 0;
+    return { prices: null, manual: false };
   }
 }
 

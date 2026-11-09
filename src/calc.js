@@ -183,3 +183,28 @@ export function manualProductCost(settings) {
   const cost = settings?.giaVonMoiVien;
   return typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : null;
 }
+
+export function manualProductCosts(settings) {
+  const legacy = manualProductCost(settings);
+  const prices = settings?.giaVonTheoKenh;
+  const retail = prices?.retail;
+  const wholesale = prices?.wholesale;
+  if (Number.isFinite(retail) && retail >= 0 && Number.isFinite(wholesale) && wholesale >= 0) {
+    return { retail, wholesale };
+  }
+  return legacy === null ? null : { retail: legacy, wholesale: legacy };
+}
+
+// Khi hai mức khác nhau, phiếu chưa có kênh bán cần được phân loại trước.
+export function productCostForSales(entries, locations, prices) {
+  if (!prices) return 0;
+  let total = 0;
+  for (const entry of entries) {
+    const qty = salesQuantity(entry, locations);
+    if (!qty) continue;
+    const channel = entryChannel(entry, locations);
+    if (channel === "unknown" && prices.retail !== prices.wholesale) return null;
+    total += qty * (channel === "wholesale" ? prices.wholesale : prices.retail);
+  }
+  return total;
+}

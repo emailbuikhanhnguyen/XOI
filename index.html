@@ -545,10 +545,14 @@
     <h3 class="section-heading">Giá vốn sản phẩm</h3>
     <form id="form-product-cost" class="ticket ticket-form">
       <label class="field">
-        <span>Giá vốn mỗi viên xôi (đ)</span>
-        <input type="number" inputmode="numeric" id="product-cost" min="0" step="1" placeholder="VD: 4000" />
+        <span>Bán lẻ + bỏ mối (đ/viên)</span>
+        <input type="number" inputmode="decimal" id="product-cost-retail" min="0" step="any" placeholder="VD: 4000" />
       </label>
-      <p class="hint-text">Giá vốn dùng chung cho các điểm bán, gồm chi phí làm ra một viên xôi. Lương/thưởng và chi khác được trừ riêng trong báo cáo. Giá mới áp dụng cho toàn bộ khoảng ngày đang xem, kể cả ngày cũ. Để trống và lưu để dùng lại định mức nguyên liệu.</p>
+      <label class="field">
+        <span>Bán sỉ (đ/viên)</span>
+        <input type="number" inputmode="decimal" id="product-cost-wholesale" min="0" step="any" placeholder="VD: 3500" />
+      </label>
+      <p class="hint-text">Nhập cả hai mức hoặc để trống cả hai để dùng lại định mức nguyên liệu. Báo cáo dùng giá hiện tại cho cả ngày cũ. Lương/thưởng và chi khác được trừ riêng.</p>
       <div class="ticket-actions"><button type="submit" class="btn btn-primary">Lưu giá vốn</button></div>
       <p class="hint-text" data-bind="product-cost-status"></p>
     </form>

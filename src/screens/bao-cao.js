@@ -3,8 +3,8 @@ import { doc, getDoc, serverTimestamp, setDoc } from "https://www.gstatic.com/fi
 import { db } from "../firebase-init.js";
 import { $, $$, mount, emptyState, toast, reportError } from "../ui.js";
 import { state, activeLocations, entryGiaBan, locationName, staffName, withPayroll, paysWages, soldQty } from "../state.js";
-import { computeGiaVonPerPhan, fetchEntriesByRange, fetchIngredientsByRange, fetchThuChiByRange } from "../data.js";
-import { addDays, escapeHtml, fmt, fmtNum, isoLocal, mondayOf, todayISO, weekdayLabel, dailySales, manualProductCost } from "../calc.js";
+import { fetchProductCostPrices, fetchEntriesByRange, fetchIngredientsByRange, fetchThuChiByRange } from "../data.js";
+import { addDays, escapeHtml, fmt, fmtNum, isoLocal, mondayOf, todayISO, weekdayLabel, dailySales, productCostForSales } from "../calc.js";
 
 let reportEntriesCache = [];
 let reportIngCache = [];
@@ -63,13 +63,13 @@ async function loadReport() {
   const locFilter = $("#report-location").value;
   const sumEl = $('[data-bind="report-summary"]');
   sumEl.innerHTML = `<div class="stat-card"><div class="label">Đang tải…</div></div>`;
-  let giaVonPerPhan;
+  let costConfig;
   try {
-    [reportEntriesCache, reportIngCache, reportThuChiCache, giaVonPerPhan] = await Promise.all([
+    [reportEntriesCache, reportIngCache, reportThuChiCache, costConfig] = await Promise.all([
       fetchEntriesByRange(from, to),
       fetchIngredientsByRange(from, to),
       fetchThuChiByRange(from, to),
-      computeGiaVonPerPhan(),
+      fetchProductCostPrices(),
     ]);
   } catch (err) {
     console.error(err);
@@ -88,45 +88,49 @@ async function loadReport() {
   const selectedIsPoint = locFilter && state.locationsDirectory[locFilter]?.type === "point";
   const ingScoped = locFilter ? reportIngCache.filter((r) => r.locationId === locFilter) : reportIngCache;
   const chiPhiNL = selectedIsPoint ? 0 : ingScoped.reduce((s, r) => s + (r.tien || 0), 0);
-  // Đã đặt định mức nguyên liệu/phần ở Quản lý → phân bổ giá vốn NL theo số
-  // lượng bán thực tế, áp dụng được cho cả từng điểm bán (không chỉ "Tất cả điểm").
-  const coBOM = (manualProductCost(state.settings) !== null || giaVonPerPhan > 0);
-  const giaVonNLPhanBo = giaVonPerPhan * tongSoLuong;
+  const { prices, manual } = costConfig;
+  const giaVonNLPhanBo = productCostForSales(worked, state.locationsDirectory, prices);
 
   const tcScoped = locFilter ? reportThuChiCache.filter((r) => r.locationId === locFilter) : reportThuChiCache;
   const thuKhac = tcScoped.filter((r) => r.loai === "thu").reduce((s, r) => s + (r.soTien || 0), 0);
   const chiKhac = tcScoped.filter((r) => r.loai === "chi").reduce((s, r) => s + (r.soTien || 0), 0);
 
-  const chiPhiNLDungTinhLoiNhuan = coBOM ? giaVonNLPhanBo : chiPhiNL;
-  const loiNhuan = doanhThu - chiPhiNLDungTinhLoiNhuan - luongThuong + thuKhac - chiKhac;
+  const chiPhiNLDungTinhLoiNhuan = prices ? giaVonNLPhanBo : chiPhiNL;
+  const loiNhuan = chiPhiNLDungTinhLoiNhuan === null ? null : doanhThu - chiPhiNLDungTinhLoiNhuan - luongThuong + thuKhac - chiKhac;
 
   sumEl.innerHTML = `
     <div class="stat-card gold"><div class="label">Doanh thu ước tính</div><div class="value">${fmt(doanhThu)}</div></div>
     <div class="stat-card"><div class="label">Số lượng bán</div><div class="value">${fmtNum(tongSoLuong)}</div></div>
-    ${coBOM
-      ? `<div class="stat-card accent"><div class="label">Giá vốn sản phẩm</div><div class="value">${fmt(giaVonNLPhanBo)}</div></div>`
+    ${prices
+      ? `<div class="stat-card accent"><div class="label">Giá vốn sản phẩm</div><div class="value">${giaVonNLPhanBo === null ? "—" : fmt(giaVonNLPhanBo)}</div></div>`
       : `<div class="stat-card accent"><div class="label">Chi phí nguyên liệu${selectedIsPoint ? " (—)" : ""}</div><div class="value">${fmt(chiPhiNL)}</div></div>`}
     <div class="stat-card accent"><div class="label">Lương + thưởng</div><div class="value">${fmt(luongThuong)}</div></div>
     <div class="stat-card gold"><div class="label">Thu khác</div><div class="value">${fmt(thuKhac)}</div></div>
     <div class="stat-card accent"><div class="label">Chi khác</div><div class="value">${fmt(chiKhac)}</div></div>
-    <div class="stat-card"><div class="label">Lợi nhuận ước tính</div><div class="value">${fmt(loiNhuan)}</div></div>
+    <div class="stat-card"><div class="label">Lợi nhuận ước tính</div><div class="value">${loiNhuan === null ? "—" : fmt(loiNhuan)}</div></div>
   `;
-  if (coBOM) {
-    sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Giá vốn sản phẩm = ${fmt(giaVonPerPhan)}/phần × số lượng bán, ${manualProductCost(state.settings) !== null ? "theo giá nhập tay hiện tại (áp dụng cả ngày cũ)" : "theo định mức nguyên liệu"}. Lợi nhuận = doanh thu − giá vốn − lương/thưởng + thu khác − chi khác.</p>`);
+  if (prices) {
+    const rates = manual
+      ? `Lẻ + mối ${fmt(prices.retail)}/viên, sỉ ${fmt(prices.wholesale)}/viên. Giá hiện tại áp dụng cả ngày cũ.`
+      : `Giá vốn theo định mức ${fmt(prices.retail)}/viên.`;
+    const note = loiNhuan === null
+      ? " Chưa tính được lợi nhuận. Vào Quản lý → Sửa điểm để phân loại các điểm còn thiếu kênh bán."
+      : " Lợi nhuận = doanh thu − giá vốn − lương/thưởng + thu khác − chi khác.";
+    sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">${rates}${note}</p>`);
   } else if (selectedIsPoint) {
     sumEl.insertAdjacentHTML("beforeend", `<p class="hint-text" style="grid-column:1/-1;">Chi phí nguyên liệu phát sinh chung ở bếp trung tâm nên không chia theo từng điểm bán — xem ở lựa chọn "Tất cả điểm" hoặc điểm bếp.</p>`);
   }
 
-  renderByLocationTable(allWorked, reportIngCache, locFilter, giaVonPerPhan);
+  renderByLocationTable(allWorked, reportIngCache, locFilter, prices);
   renderByStaffTable(worked, !locFilter);
   renderDailyBarChart(worked, from, to);
-  await renderMonthlyChart(locFilter, giaVonPerPhan);
+  await renderMonthlyChart(locFilter, prices);
   await renderSettlements(worked);
 }
 
 // Biểu đồ doanh thu + lợi nhuận ước tính theo tháng (6 tháng gần nhất), độc
 // lập với khoảng ngày đang lọc ở trên để luôn thấy được xu hướng dài hạn.
-async function renderMonthlyChart(locFilter, giaVonPerPhan = 0) {
+async function renderMonthlyChart(locFilter, prices) {
   const el = $('[data-bind="report-monthly-chart"]');
   if (!el) return;
   el.innerHTML = `<p class="empty-state">Đang tải…</p>`;
@@ -143,10 +147,10 @@ async function renderMonthlyChart(locFilter, giaVonPerPhan = 0) {
     const byMonth = {};
     worked.forEach((r) => {
       const m = r.date.slice(0, 7);
-      byMonth[m] = byMonth[m] || { doanhThu: 0, luongThuong: 0, soLuong: 0 };
+      byMonth[m] = byMonth[m] || { doanhThu: 0, luongThuong: 0, entries: [] };
       byMonth[m].doanhThu += soldQty(r) * entryGiaBan(r);
       byMonth[m].luongThuong += r.tong || 0;
-      byMonth[m].soLuong += soldQty(r);
+      byMonth[m].entries.push(r);
     });
 
     const months = [];
@@ -156,15 +160,15 @@ async function renderMonthlyChart(locFilter, giaVonPerPhan = 0) {
       cursor.setMonth(cursor.getMonth() + 1);
     }
     const dataRows = months.map((m) => {
-      const d = byMonth[m] || { doanhThu: 0, luongThuong: 0, soLuong: 0 };
-      const giaVonNL = giaVonPerPhan * d.soLuong;
-      const loiNhuan = d.doanhThu - d.luongThuong - giaVonNL;
+      const d = byMonth[m] || { doanhThu: 0, luongThuong: 0, entries: [] };
+      const giaVonNL = productCostForSales(d.entries, state.locationsDirectory, prices);
+      const loiNhuan = giaVonNL === null ? null : d.doanhThu - d.luongThuong - giaVonNL;
       return { month: m, ...d, loiNhuan };
     });
     const max = Math.max(1, ...dataRows.map((d) => d.doanhThu));
 
     el.innerHTML = `
-      <p class="eyebrow">Doanh thu ${MONTHS_BACK} tháng gần nhất${(manualProductCost(state.settings) !== null || giaVonPerPhan > 0) ? " (lợi nhuận đã trừ giá vốn sản phẩm)" : ""}</p>
+      <p class="eyebrow">Doanh thu ${MONTHS_BACK} tháng gần nhất${prices ? " (lợi nhuận đã trừ giá vốn sản phẩm)" : ""}</p>
       ${dataRows.map((d) => `
         <div class="bar-row">
           <span class="bar-label">Th${d.month.slice(5, 7)}/${d.month.slice(2, 4)}</span>
@@ -172,7 +176,7 @@ async function renderMonthlyChart(locFilter, giaVonPerPhan = 0) {
           <span class="bar-value">${fmtNum(d.doanhThu)}</span>
         </div>
       `).join("")}
-      <p class="hint-text">Lợi nhuận ước tính theo tháng: ${dataRows.map((d) => `Th${d.month.slice(5, 7)}: ${fmt(d.loiNhuan)}`).join(" · ")}</p>
+      <p class="hint-text">Lợi nhuận ước tính theo tháng: ${dataRows.map((d) => `Th${d.month.slice(5, 7)}: ${d.loiNhuan === null ? "chưa phân kênh" : fmt(d.loiNhuan)}`).join(" · ")}</p>
     `;
   } catch (err) {
     console.error(err);
@@ -180,7 +184,7 @@ async function renderMonthlyChart(locFilter, giaVonPerPhan = 0) {
   }
 }
 
-function renderByLocationTable(allWorked, allIng, locFilter, giaVonPerPhan = 0) {
+function renderByLocationTable(allWorked, allIng, locFilter, prices) {
   const el = $('[data-bind="report-by-location"]');
   const wrap = $('[data-bind="report-by-location-wrap"]');
   if (!el || !wrap) return;
@@ -189,27 +193,27 @@ function renderByLocationTable(allWorked, allIng, locFilter, giaVonPerPhan = 0) 
   const groups = {};
   allWorked.forEach((r) => {
     const id = r.locationId || "__none";
-    groups[id] = groups[id] || { name: locationName(r.locationId), soLuong: 0, doanhThu: 0, luongThuong: 0 };
+    groups[id] = groups[id] || { name: locationName(r.locationId), soLuong: 0, doanhThu: 0, luongThuong: 0, entries: [] };
     groups[id].soLuong += soldQty(r);
+    groups[id].entries.push(r);
     groups[id].doanhThu += soldQty(r) * entryGiaBan(r);
     groups[id].luongThuong += r.tong || 0;
   });
   const rows = Object.values(groups).sort((a, b) => b.doanhThu - a.doanhThu);
   if (!rows.length) { el.innerHTML = emptyState("Chưa có dữ liệu"); return; }
   const chiPhiNLTong = allIng.reduce((s, r) => s + (r.tien || 0), 0);
-  const coBOM = (manualProductCost(state.settings) !== null || giaVonPerPhan > 0);
   el.innerHTML = `
     <table class="data-table">
-      <thead><tr><th>Điểm bán</th><th>Số lượng</th><th>Doanh thu</th><th>Lương+thưởng</th>${coBOM ? "<th>Giá vốn sản phẩm</th>" : ""}<th>Lãi ước tính${coBOM ? "" : " (chưa trừ NL)"}</th></tr></thead>
+      <thead><tr><th>Điểm bán</th><th>Số lượng</th><th>Doanh thu</th><th>Lương+thưởng</th>${prices ? "<th>Giá vốn sản phẩm</th>" : ""}<th>Lãi ước tính${prices ? "" : " (chưa trừ NL)"}</th></tr></thead>
       <tbody>
         ${rows.map((g) => {
-          const giaVonNL = coBOM ? giaVonPerPhan * g.soLuong : 0;
-          const lai = g.doanhThu - g.luongThuong - giaVonNL;
-          return `<tr><td>${escapeHtml(g.name)}</td><td>${fmtNum(g.soLuong)}</td><td>${fmt(g.doanhThu)}</td><td>${fmt(g.luongThuong)}</td>${coBOM ? `<td>${fmt(giaVonNL)}</td>` : ""}<td><b>${fmt(lai)}</b></td></tr>`;
+          const giaVonNL = productCostForSales(g.entries, state.locationsDirectory, prices);
+          const lai = giaVonNL === null ? null : g.doanhThu - g.luongThuong - giaVonNL;
+          return `<tr><td>${escapeHtml(g.name)}</td><td>${fmtNum(g.soLuong)}</td><td>${fmt(g.doanhThu)}</td><td>${fmt(g.luongThuong)}</td>${prices ? `<td>${giaVonNL === null ? "—" : fmt(giaVonNL)}</td>` : ""}<td><b>${lai === null ? "Chưa phân kênh" : fmt(lai)}</b></td></tr>`;
         }).join("")}
       </tbody>
     </table>
-    <p class="hint-text">Chi phí nguyên liệu thực nhập toàn hệ thống (bếp trung tâm): <b>${fmt(chiPhiNLTong)}</b>${coBOM ? " — dùng để đối chiếu với giá vốn sản phẩm ở bảng trên." : " — chưa phân bổ vào từng điểm ở bảng trên (chưa có định mức nguyên liệu/phần nào được đặt)."}</p>
+    <p class="hint-text">Chi phí nguyên liệu thực nhập toàn hệ thống (bếp trung tâm): <b>${fmt(chiPhiNLTong)}</b>${prices ? " — dùng để đối chiếu với giá vốn sản phẩm ở bảng trên." : " — chưa phân bổ vào từng điểm ở bảng trên (chưa có định mức nguyên liệu/phần nào được đặt)."}</p>
   `;
 }
 
