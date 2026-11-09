@@ -111,7 +111,7 @@ async function loadReport() {
   `;
   if (prices) {
     const rates = manual
-      ? `Lẻ + mối ${fmt(prices.retail)}/viên, sỉ ${fmt(prices.wholesale)}/viên. Giá hiện tại áp dụng cả ngày cũ.`
+      ? `Bán lẻ ${fmt(prices.retail)}/viên, bán sỉ + bỏ mối ${fmt(prices.wholesale)}/viên. Giá hiện tại áp dụng cả ngày cũ.`
       : `Giá vốn theo định mức ${fmt(prices.retail)}/viên.`;
     const note = loiNhuan === null
       ? " Chưa tính được lợi nhuận. Vào Quản lý → Sửa điểm để phân loại các điểm còn thiếu kênh bán."
